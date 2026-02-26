@@ -1,0 +1,26 @@
+"region_map": "example_files/concordances/region_map.csv"
+"technology_map": "example_files/concordances/technology_map.csv"
+"database_file": "ISP_HOME.db"
+#choose years_mode, config or csv
+"years_mode" : "config"
+#year for the db input
+"input_year": [2030]
+#year for the genx input files
+"output_year": [2030]
+#csv path
+"input_output_mapping": "input_output_mapping.csv"
+#fields that we want to input from the DB values
+"fields": ["Min_Cap_MW", "Max_Cap_MW"]
+#type of genx inputs (whether it is old or new)
+"type": "new"
+"scenario_2": "CDP10"
+#variable can be either Capacity or Generation
+"variable": "capacity"
+#either sum, avg or weighted avg (specify the weights)
+"aggregation": "None"
+#if values are missing, whether None (insert Null), Pass (leave value unchanged in the file), or Raise Error
+"missing_values": "Pass"
+#2024 data source
+"data_source": "2024 Final ISP"
+#"Green Energy Exports", "Progressive Change", and "Step Change".
+"scenario_1": "Green Energy Exports - Core"

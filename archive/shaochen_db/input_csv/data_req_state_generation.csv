@@ -1,0 +1,42 @@
+Technology,NSW,QLD,SA,TAS,VIC
+Offshore Wind,Y,Y,Y,Y,Y
+Wind,Y,Y,Y,Y,Y
+Utility-scale Solar,Y,Y,Y,Y,Y
+Utility solar,Y,Y,Y,Y,Y
+Rooftop and other small-scale solar,Y,Y,Y,Y,Y
+Distributed PV,Y,Y,Y,Y,Y
+Hydro,Y,Y,Y,Y,Y
+Snowy 2.0,Y,Y,Y,Y,Y
+DSP,Y,Y,Y,Y,Y
+Other renewable fuels,Y,Y,Y,Y,Y
+Biomass,Y,Y,Y,Y,Y
+Black coal,Y,Y,Y,Y,Y
+Brown coal,Y,Y,Y,Y,Y
+Mid-merit gas,Y,Y,Y,Y,Y
+Mid-merit Gas,Y,Y,Y,Y,Y
+Mid-merit Gas with CCS,Y,Y,Y,Y,Y
+Flexible gas,Y,Y,Y,Y,Y
+Flexible Gas,Y,Y,Y,Y,Y
+Flexible gas with CCS,Y,Y,Y,Y,Y
+Peaking Gas+Liquids,Y,Y,Y,Y,Y
+Hydrogen Turbine,Y,Y,Y,Y,Y
+Solar Thermal,Y,Y,Y,Y,Y
+Utility storage,Y,Y,Y,Y,Y
+Utility-scale Storage,Y,Y,Y,Y,Y
+Utility storage load,Y,Y,Y,Y,Y
+Utility-scale Storage Load,Y,Y,Y,Y,Y
+Deep Storage,Y,Y,Y,Y,Y
+Medium Storage,Y,Y,Y,Y,Y
+Shallow Storage,Y,Y,Y,Y,Y
+Distributed Storage,Y,Y,Y,Y,Y
+Distributed Storage Load,Y,Y,Y,Y,Y
+Coordinated DER Storage,Y,Y,Y,Y,Y
+Coordinated DER Storage Load,Y,Y,Y,Y,Y
+Coordinated CER storage,Y,Y,Y,Y,Y
+Coordinated CER storage load,Y,Y,Y,Y,Y
+Passive CER storage,Y,Y,Y,Y,Y
+Passive CER storage load,Y,Y,Y,Y,Y
+Coordinated CER Storage,Y,Y,Y,Y,Y
+Coordinated CER Storage Load,Y,Y,Y,Y,Y
+Passive CER Storage,Y,Y,Y,Y,Y
+Passive CER Storage Load,Y,Y,Y,Y,Y

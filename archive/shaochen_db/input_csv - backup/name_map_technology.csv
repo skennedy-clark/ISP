@@ -1,0 +1,20 @@
+Native_name,preferred_name,standard_name
+Utility-scale Storage Load,Utility-scale Storage Charging,xxx
+Coordinated DER Storage Load,Coordinated DER Storage Charging,yyy
+Distributed Storage Load,Distributed Storage Charging,zzz
+Black Coal,Black Coal,Black Coal
+Black Coal,Black Coal 2,Black Coal
+Brown Coal,Brown Coal,Brown Coal
+Mid-merit Gas,Mid-merit Gas,Mid-merit Gas
+Mid-merit Gas with CCS,Mid-merit Gas with CCS,Mid-merit Gas with CCS
+Peaking Gas+Liquids,Peaking Gas+Liquids,Peaking Gas+Liquids
+Hydrogen Turbine,Hydrogen Turbine,Hydrogen Turbine
+Hydro,Hydro,Hydro
+Utility-scale Storage,Utility-scale Storage,Utility-scale Storage
+Coordinated DER Storage,Coordinated DER Storage,Coordinated DER Storage
+Distributed Storage,Distributed Storage,Distributed Storage
+Solar Thermal,Solar Thermal,Solar Thermal
+Offshore Wind,Offshore Wind,Offshore Wind
+Wind,Wind,Wind
+Utility-scale Solar,Utility-scale Solar,Utility-scale Solar
+Distributed PV,Distributed PV,Distributed PV

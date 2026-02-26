@@ -1,0 +1,19 @@
+,NSW,QLD,VIC,TAS,SA
+Black Coal,Y,Y,Y,Y,Y
+Brown Coal,Y,,Y,,
+Mid-merit Gas,Y,Y,Y,Y,Y
+Mid-merit Gas with CCS,Y,Y,Y,Y,Y
+Peaking Gas+Liquids,Y,Y,Y,Y,Y
+Hydrogen Turbine,Y,Y,Y,Y,Y
+Hydro,Y,Y,Y,Y,Y
+Utility-scale Storage,Y,Y,Y,Y,Y
+Coordinated DER Storage,Y,Y,Y,Y,Y
+Distributed Storage,Y,Y,Y,Y,Y
+Solar Thermal,Y,Y,Y,Y,Y
+Offshore Wind,Y,Y,Y,Y,Y
+Wind,Y,Y,Y,Y,Y
+Utility-scale Solar,Y,Y,Y,Y,Y
+Distributed PV,Y,Y,Y,Y,Y
+Utility-scale Storage Load,Y,Y,Y,Y,Y
+Coordinated DER Storage Load,Y,Y,Y,Y,Y
+Distributed Storage Load,Y,Y,Y,Y,Y

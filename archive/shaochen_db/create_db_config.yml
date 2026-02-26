@@ -1,0 +1,7 @@
+exception:
+  negative:
+    threshold: -1e-6
+    ignore_tech: []
+
+  upper:
+    threshold: 100
