@@ -64,6 +64,7 @@ desktop.ini
 # Historical snapshots, example bundles, and generated results
 db/
 ISP2026 data for adding to DB/
+archive/shaochen_db/*.db*
 # Subtree with many scenario images (coal capacity/UF PDFs)
 archive/shaochen_db/GETRC/
 # CSV conversions of XLSX "exceptions"

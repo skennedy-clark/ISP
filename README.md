@@ -1,4 +1,3 @@
-
 # ISP Database Pipeline
 
 Builds a local SQLite database from AEMO Integrated System Plan (ISP) modelling
@@ -34,7 +33,7 @@ The original workbooks in `data/` are never modified.
 
 **Stage 2 - create_db.py** reads the pre-processed files, transforms each sheet
 into long format, standardises technology names, filters to the required
-technologies, and loads everything into `ISP_HOME.db`.
+technologies, and loads everything into `ISP.db`.
 
 The database stores modelling results across all scenarios, CDPs, states,
 subregions, REZ zones, technologies, variables, and years from all loaded
@@ -59,12 +58,12 @@ SQLite is part of the Python standard library - no database server required.
 ```
 project root/
 |
-|- create_db.py                  main pipeline - builds ISP_HOME.db
+|- create_db.py                  main pipeline - builds ISP.db
 |- read_hidden.py                pre-processing - extracts hidden sheets
 |- find_missing_technologies.py  audit tool - checks filter CSV coverage
 |- compare_databases.py          validation tool - compares two databases
 |- compare_supply_annual.sql     SQL queries for comparing against Supply-annual.db
-|- isp_plots.py                  plotting script - reads from ISP_HOME.db
+|- isp_plots.py                  plotting script - reads from ISP.db
 |- ISP.db                        output database (created by create_db.py)
 |- error_YYYYMMDD.log            error log (only created when errors occur)
 |
@@ -174,6 +173,11 @@ No VACUUM is needed - SQLite handles the WAL cleanup as part of the mode switch.
 
 7. Run `create_db.py`. The new release will be picked up automatically.
 
+8. Check the `Scenario_2` (CDP) values for the new release and update the `odp`
+   and `core_scenarios` dataframes in `isp_plots.py` accordingly. Note that
+   AEMO sometimes embeds the ODP label directly in the CDP name - for example,
+   2026 Draft uses `CDP4 (ODP)` rather than plain `CDP4`.
+
 ---
 
 ## Input files
@@ -261,13 +265,79 @@ and technologies exist for a given release without scanning the large tables.
 | Original_value | TEXT | Name as it appeared in the xlsx file                           |
 | Standard_value | TEXT | Name after standardisation via name_map_technology.csv         |
 
+### v_context_with_region (view)
+
+A convenience view over `context` that replaces NULL values in the `Region`
+column with synthetic state-level placeholder codes. **Analysis scripts should
+query this view rather than `context` directly.**
+
+```sql
+CREATE VIEW v_context_with_region AS
+SELECT
+    c.Id,
+    c.Data_source,
+    c.Scenario_1,
+    c.Scenario_2,
+    c.State,
+    CASE
+        WHEN c.Region IS NOT NULL THEN c.Region
+        ELSE CASE c.State
+            WHEN 'NSW' THEN 'N0'
+            WHEN 'QLD' THEN 'Q0'
+            WHEN 'VIC' THEN 'V0'
+            WHEN 'SA'  THEN 'S0'
+            WHEN 'TAS' THEN 'T0'
+            ELSE NULL
+        END
+    END AS Region,
+    c.Technology
+FROM context c;
+```
+
+Rows where `Region IS NULL` in the underlying `context` table (i.e. state-level
+rows from releases without subregion breakdown) are assigned a synthetic
+placeholder code: `N0` (NSW), `Q0` (QLD), `V0` (VIC), `S0` (SA), `T0` (TAS).
+These codes do not appear in the source data and will not collide with real
+subregion codes (`NNSW`, `CQ`, `SQ` etc.) or REZ codes (`N1`, `Q3` etc.).
+
+**Why this matters.** The granularity of stored data differs across releases:
+
+| Release      | Data granularity              |
+|--------------|-------------------------------|
+| 2022 Draft   | State level only (Region NULL) |
+| 2022 Final   | State level only (Region NULL) |
+| 2024 Draft   | State level only (Region NULL) |
+| 2024 Final   | Subregion level only           |
+| 2026 Draft   | Subregion level only           |
+
+Each release uses exactly one level consistently per technology - there are no
+releases where the same technology appears at both state and subregion level
+simultaneously. This means there is no double-counting risk when summing all
+rows within a release. The synthetic codes simply make the `Region` column
+uniform across releases so joins and `groupby` operations behave consistently
+without needing special NULL handling.
+
+**Filtering to state-level rows across releases.** When querying through this
+view you cannot use `Region IS NULL` - the view never returns NULLs. Use the
+synthetic codes instead:
+
+```sql
+WHERE v.Region IN ('N0', 'Q0', 'V0', 'S0', 'T0')
+```
+
+This returns the state-level rows for 2022/2024 Draft releases. For 2024 Final
+and 2026 Draft, which have no state-level rows at all, this filter returns
+nothing. In those cases you should query without a Region filter and let the
+subregion rows aggregate to the state/NEM total naturally.
+
 ---
 
 ## Querying the database
 
-All queries join `data` to `context` on `Id`. Always include a `Data_source`
-filter when querying by scenario name - names like `Step Change - Core` appear
-in multiple releases and mixing them produces meaningless aggregates.
+All queries join `data` to `v_context_with_region` on `Id`. Always include a
+`Data_source` filter when querying by scenario name - names like
+`Step Change - Core` appear in multiple releases and mixing them produces
+meaningless aggregates.
 
 ### What scenarios are available for a release
 
@@ -279,7 +349,7 @@ AND   Attribute_type = 'Scenario_1'
 ORDER BY Original_value;
 ```
 
-### What CDPs exist for a scenario
+### What CDPs exist for a release
 
 ```sql
 SELECT DISTINCT Original_value
@@ -289,58 +359,76 @@ AND   Attribute_type = 'Scenario_2'
 ORDER BY Original_value;
 ```
 
-### Total NEM capacity by year for one scenario
+### Total NEM capacity by year - releases with state-level data (2022, 2024 Draft)
+
+Filter to the synthetic state codes to select state-level rows only and avoid
+picking up any subregion rows if they are ever added in future:
 
 ```sql
 SELECT
     d.Year,
     ROUND(SUM(d.Value) / 1000.0, 1) AS total_GW
 FROM data d
-JOIN context c ON d.Id = c.Id
-WHERE c.Data_source = '2024 Final ISP'
-AND   c.Scenario_1  = 'Step Change - Core'
-AND   c.Scenario_2  = 'CDP10'
+JOIN v_context_with_region v ON d.Id = v.Id
+WHERE v.Data_source = '2022 Final ISP'
+AND   v.Scenario_1  = 'Step Change - Updated Inputs'
+AND   v.Scenario_2  = 'CDP12'
 AND   d.Variable    = 'capacity'
-AND   c.Region IS NULL
+AND   v.Region IN ('N0', 'Q0', 'V0', 'S0', 'T0')
 GROUP BY d.Year
 ORDER BY d.Year;
 ```
 
-`WHERE c.Region IS NULL` restricts to state-level rows and excludes subregion
-rows - important when summing across states to avoid double-counting.
+### Total NEM capacity by year - releases with subregion data (2024 Final, 2026 Draft)
+
+Omit the Region filter entirely - the subregion rows sum to the correct NEM total:
+
+```sql
+SELECT
+    d.Year,
+    ROUND(SUM(d.Value) / 1000.0, 1) AS total_GW
+FROM data d
+JOIN v_context_with_region v ON d.Id = v.Id
+WHERE v.Data_source = '2024 Final ISP'
+AND   v.Scenario_1  = 'Step Change - Core'
+AND   v.Scenario_2  = 'CDP14'
+AND   d.Variable    = 'capacity'
+GROUP BY d.Year
+ORDER BY d.Year;
+```
 
 ### Technology capacity in a specific REZ zone
 
 ```sql
 SELECT
-    c.Technology,
+    v.Technology,
     d.Year,
     d.Value AS MW
 FROM data d
-JOIN context c ON d.Id = c.Id
-WHERE c.Data_source = '2026 Draft ISP'
-AND   c.Scenario_1  = 'Step Change - Core'
-AND   c.Scenario_2  = 'CDP1'
-AND   c.State       = 'NSW'
-AND   c.Region      = 'N1'
+JOIN v_context_with_region v ON d.Id = v.Id
+WHERE v.Data_source = '2026 Draft ISP'
+AND   v.Scenario_1  = 'Step Change - Core'
+AND   v.Scenario_2  = 'CDP1'
+AND   v.State       = 'NSW'
+AND   v.Region      = 'N1'
 AND   d.Variable    = 'capacity'
-ORDER BY c.Technology, d.Year;
+ORDER BY v.Technology, d.Year;
 ```
 
 ### Existing and Committed capacity across releases
 
 ```sql
 SELECT
-    c.Data_source,
-    c.Technology,
-    c.State,
+    v.Data_source,
+    v.Technology,
+    v.State,
     d.Value AS MW
 FROM non_annual_data d
-JOIN context c ON d.Id = c.Id
-WHERE c.Scenario_2  = 'CDP1'
+JOIN v_context_with_region v ON d.Id = v.Id
+WHERE v.Scenario_2  = 'CDP1'
 AND   d.Variable    = 'capacity'
-AND   c.Region IS NULL
-ORDER BY c.Data_source, c.State, c.Technology;
+AND   v.Region IN ('N0', 'Q0', 'V0', 'S0', 'T0')
+ORDER BY v.Data_source, v.State, v.Technology;
 ```
 
 ---
@@ -363,15 +451,26 @@ when charging. These are not data errors.
 
 ### Subregion coverage by vintage
 
-The `Region` column (subregion codes: NNSW, CNSW etc) is only populated for
-2024 Final and 2026 Draft. Earlier releases have `Region = NULL` for all rows.
-Use `WHERE c.Region IS NULL` to restrict to state-level rows when comparing
-across releases.
+The `Region` column is only populated for 2024 Final and 2026 Draft. Earlier
+releases have `Region = NULL` for all rows in the underlying `context` table.
+Through `v_context_with_region` these appear as the synthetic state codes `N0`,
+`Q0`, `V0`, `S0`, `T0` (see view documentation above).
+
+Critically, 2024 Final and 2026 Draft store all data at subregion level only -
+there are no state-level rows for those releases. The `Region IN ('N0'...)` filter
+therefore returns nothing for those releases. See the query examples above for
+the correct approach for each release type.
 
 ### Scenario names are not unique across releases
 
 `Step Change - Core` and similar names exist in multiple releases. Always filter
 on `Data_source` as well as `Scenario_1` in any query.
+
+### ODP label embedded in CDP name (2026 Draft)
+
+For 2026 Draft, AEMO embedded the ODP designation directly in the CDP name. The
+ODP is `CDP4 (ODP)`, not `CDP4`. When referencing the 2026 Draft ODP in scripts
+or queries use the full string `CDP4 (ODP)`.
 
 ---
 
@@ -392,8 +491,8 @@ compared.
 
 ### compare_supply_annual.sql
 
-SQL queries for comparing `ISP_HOME.db` against the original `Supply-annual.db`
-reference database in DBeaver. Run against `ISP_HOME.db` - the script ATTACHes
+SQL queries for comparing `ISP.db` against the original `Supply-annual.db`
+reference database in DBeaver. Run against `ISP.db` - the script ATTACHes
 `Supply-annual.db` automatically.
 
 Sections 1 and 2 (row counts and context differences) are fast. Sections 3 and 4
@@ -408,22 +507,24 @@ slow on a laptop - run these only if the earlier sections show unexpected result
 |---------------------------------|-------------------------------------------------------|
 | `read_hidden.py`                | Once per new ISP release, before create_db.py         |
 | `find_missing_technologies.py`  | After read_hidden.py, before create_db.py             |
-| `create_db.py`                  | To build or rebuild ISP_HOME.db                       |
-| `isp_plots.py`                  | To generate analysis plots from ISP_HOME.db           |
+| `create_db.py`                  | To build or rebuild ISP.db                            |
+| `isp_plots.py`                  | To generate analysis plots from ISP.db                |
 | `compare_databases.py`          | To validate a new build against a reference database  |
 | `compare_supply_annual.sql`     | Ad hoc comparison against Supply-annual.db in DBeaver |
 
+---
 
+## Useful commands
 
-
-
-Useful code:
-
+```powershell
+# Create and activate virtual environment (Windows)
 python -m venv venv
 .\venv\Scripts\Activate.ps1
+```
 
-
+```bash
+# Inspect the database from a minimal Docker container
 docker run -it --rm alpine sh
 apk add sqlite
-sqlite3
-
+sqlite3 ISP.db
+```
