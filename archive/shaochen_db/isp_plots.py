@@ -48,8 +48,10 @@ def plot_core_scenarios(
     # Lineplots for each core scenario and ODP.
     for i, row in core_scenarios.iterrows():
 
-        # Filter
+        # Filter - must include Data_source to disambiguate scenario names
+        # that appear in multiple ISP releases (e.g. 'Step Change - Core')
         df_sum_loop = df_sum[
+            (df_sum.Data_source == row['ISP']) &
             (df_sum.Scenario_1 == row['core']) &
             (df_sum.Scenario_2 == row['ODP'])
         ]
@@ -91,6 +93,7 @@ def plot_sensitivity_scenarios(
         var_to_plot,
         title_plot,
         max_value,
+        pdf,
 ):
      
     """Plot Generation, Utilization Factor or Capacity for the all Sensitivity Scenarios- ODP scenarios of the 2022 and 2024 ISP
@@ -131,7 +134,7 @@ def plot_sensitivity_scenarios(
                 (df_sum.Data_source == isp) &
                 (df_sum.Scenario_1 == row['Scenario_1']) &
                 (df_sum.Scenario_2 == row['Scenario_2'])
-            ]   
+            ]
             color = scenario_colors.get(row['scenario'], 'gray')
             
             if (row['Scenario_1'] in core_scenarios.core.values):
@@ -207,15 +210,20 @@ def plot_all_cdps(
     os.makedirs(output_directory, exist_ok=True)
     output_file = os.path.join(output_directory, "all_cdps_"+ title_plot + ".pdf")
     with PdfPages(output_file) as pdf:
-        for scne1 in all_scenarios_odp['Scenario_1'].unique():
-            fig, ax = plt.subplots(figsize=(12, 8)) 
-            
-            # Filter data for the current sensitivity scenario
-            isp_data = all_scenarios[all_scenarios['Scenario_1'] == scne1]
-            isp = isp_data['Data_source'].iloc[0]
+        for (isp, scne1) in all_scenarios_odp[['Data_source', 'Scenario_1']].drop_duplicates().itertuples(index=False):
+            fig, ax = plt.subplots(figsize=(12, 8))
 
-            highlight_scenario = odp[
-                odp['Data_source'] == isp]['Scenario_2'].iloc[0]
+            # Filter data for the current ISP release and scenario
+            isp_data = all_scenarios[
+                (all_scenarios['Data_source'] == isp) &
+                (all_scenarios['Scenario_1'] == scne1)
+            ]
+
+            odp_matches = odp[odp['Data_source'] == isp]
+            if odp_matches.empty:
+                plt.close(fig)
+                continue
+            highlight_scenario = odp_matches['Scenario_2'].iloc[0]
             
             for i, row in isp_data.iterrows():
                 
@@ -252,7 +260,7 @@ def plot_all_cdps(
                         alpha=0.2,
                     )
     
-            ax.set_title(f"{title_plot} {isp} {row['Scenario_1']}", fontweight='bold', fontsize=16)
+            ax.set_title(f"{title_plot} {isp} {scne1}", fontweight='bold', fontsize=16)
             ax.set_ylabel(var_to_plot, fontweight='bold', fontsize=16)
             ax.legend(loc='best')
             ax.grid()
@@ -266,101 +274,77 @@ def plot_all_cdps(
 def get_data(
         isp_report
 ):
-    """ Query data from db.
+    """ Query data from ISP.db.
 
     Parameter
     ----------
-    isp_report: "Final" or "Draft". Specifies the type of report to query.
+    isp_report: "Final", "Draft", or "%" (load all releases).
+
+    Notes
+    -----
+    Queries v_context_with_region instead of the raw context table.  The view
+    fills in synthetic region codes (N0, Q0, V0, S0, T0) for state-level rows
+    whose Region is NULL in the underlying table.
+
+    All rows (state-level and subregion-level) are returned.  Double-counting
+    is prevented by the caller: aggregations that need NEM totals must group at
+    the correct level.  For state-level totals use groupby without Region; for
+    subregion breakdowns use groupby including Region.  Queries that need only
+    state-level rows (e.g. cross-release comparisons) should filter in the
+    caller using Region IN ('N0','Q0','V0','S0','T0').
     """
 
-    path = os.getcwd() #NOTE: changet to work on Steves machine # path = os.path.join('C:', os.sep, 'Users','andre','Downloads','shaochen_db','shaochen_db')
-    # The path of database.
-    db_path = os.path.join(path, "ISP.db")
-    
-    # Create database connection
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # Id, Variable, Year, Value   
+    db_path = os.path.join(os.getcwd(), "ISP.db")
+    conn    = sqlite3.connect(db_path)
+
     capacity = pd.read_sql(
         """
-            SELECT a.*, b.Data_source, b.Scenario_1, b.Scenario_2, b.State, b.Region, b.Technology
-            FROM data a 
-            inner join v_context_with_region b 
-            on a.Id = b.Id 
-            where a.variable = 'capacity' 
-            and b.Data_source like :isp_report """, 
-            con=conn,
-            params={"isp_report": f"%{isp_report}%"},
+            SELECT a.Id, a.Variable, a.Year, a.Value,
+                   v.Data_source, v.Scenario_1, v.Scenario_2,
+                   v.State, v.Region, v.Technology
+            FROM data a
+            INNER JOIN v_context_with_region v ON a.Id = v.Id
+            WHERE a.Variable = 'capacity'
+              AND v.Data_source LIKE ?
+        """,
+        con=conn,
+        params=[f"%{isp_report}%"],
     )
-    # Clean data
-    capacity = capacity[
-        (capacity.Year != 'Existing and Committed') & (
-            capacity.Year != 'Un33')]
-    capacity = capacity[~pd.isnull(capacity.Value)]
-    capacity['Value'] = capacity['Value'].astype(float)/1000
-    capacity = capacity[capacity.Scenario_2 != None]
-    capacity['Year'] = capacity['Year'].astype(int)
-    
+    capacity = capacity[~capacity.Year.isin(['Existing and Committed', 'Un33'])]
+    capacity = capacity[capacity.Value.notna()]
+    capacity = capacity[capacity.Scenario_2.notna()]
+    capacity['Value'] = capacity['Value'].astype(float) / 1000
+    capacity['Year']  = capacity['Year'].astype(int)
+
     generation = pd.read_sql(
         """
-            SELECT a.*, b.Data_source, b.Scenario_1, b.Scenario_2, b.State, b.Region, b.Technology
-            FROM data a 
-            inner join v_context_with_region b 
-            on a.Id = b.Id 
-            where a.variable = 'generation' 
-            and b.Data_source like :isp_report """, 
-            con=conn,
-            params={"isp_report": f"%{isp_report}%"},
+            SELECT a.Id, a.Variable, a.Year, a.Value,
+                   v.Data_source, v.Scenario_1, v.Scenario_2,
+                   v.State, v.Region, v.Technology
+            FROM data a
+            INNER JOIN v_context_with_region v ON a.Id = v.Id
+            WHERE a.Variable = 'generation'
+              AND v.Data_source LIKE ?
+        """,
+        con=conn,
+        params=[f"%{isp_report}%"],
     )
-    # Clean data
-    generation = generation[
-        (generation.Year != 'Existing and Committed') & (
-            generation.Year != 'Un33')]
-    generation = generation[~pd.isnull(generation.Value)]
-    generation = generation[generation.Scenario_2 != None]
+    generation = generation[~generation.Year.isin(['Existing and Committed', 'Un33'])]
+    generation = generation[generation.Value.notna()]
+    generation = generation[generation.Scenario_2.notna()]
     generation['Value'] = generation['Value'].astype(float)
-    generation['Year'] = generation['Year'].astype(int)
-#    storage_energy = pd.read_sql(
-#        """
-#            SELECT a.*, b.Data_source, b.Scenario_1, b.Scenario_2, b.State, b.Region, b.Technology
-#            FROM data a 
-#            inner join v_context_with_region b 
-#            on a.Id = b.Id 
-#            where a.variable = 'storage energy' 
-#            and b.Data_source like :isp_report """, 
-#            con=conn,
-#            params={"isp_report": f"%{isp_report}%"},
-#    )
-#    storage_capacity = pd.read_sql(
-#        """
-#            SELECT a.*, b.Data_source, b.Scenario_1, b.Scenario_2, b.State, b.Region, b.Technology
-#            FROM data a 
-#            inner join v_context_with_region b 
-#            on a.Id = b.Id 
-#            where a.variable = 'storage capacity' 
-#            and b.Data_source like :isp_report """, 
-#            con=conn,
-#            params={"isp_report": f"%{isp_report}%"},
-#    )
-    
-    # Data_source, Attribute_type, Original_value, Standard_value
-    # Original_value = Standard_value
-#    mapping = pd.read_sql(
-#        "SELECT * FROM mapping", con=conn
-#    )
-    # Columns
-    # Id, Data_source, Scenario_1, Scenario_2, State, Region, Technology
+    generation['Year']  = generation['Year'].astype(int)
+
     context = pd.read_sql(
         """
-            SELECT * 
-            FROM v_context_with_region 
-            where Data_source like :isp_report """, 
-            con=conn,
-            params={"isp_report": f"%{isp_report}%"},
+            SELECT *
+            FROM v_context_with_region
+            WHERE Data_source LIKE ?
+        """,
+        con=conn,
+        params=[f"%{isp_report}%"],
     )
-    
-    conn.commit()
+
     conn.close()
 
     return capacity, generation, context
@@ -456,6 +440,12 @@ def plot_stack_by_reg(
         on = agg_by,
     )
     
+    # Drop rows whose region/state code has no display name mapping.
+    # This removes synthetic state-level codes (N0, Q0, etc.) inserted by
+    # v_context_with_region for ISP releases that lack real subregion data,
+    # preventing duplicate (Year, NaN-Name) entries in the pivot.
+    df_by_reg = df_by_reg[df_by_reg['Name'].notna()]
+
     grouped = df_by_reg.groupby(['Data_source', 'Scenario_1', 'Scenario_2'])
     output_directory = output_directory = os.path.join(os.getcwd(), 'GETRC', 'ISP Images') #NOTE: Changed bu Steve to work locally #os.path.join('C:', os.sep, 'Users','andre','Documents','GETRC','ISP Images')
     os.makedirs(output_directory, exist_ok=True)
@@ -593,6 +583,12 @@ def plot_stack_by_reg_perc(
         on = agg_by,
     )
     
+    # Drop rows whose region/state code has no display name mapping.
+    # This removes synthetic state-level codes (N0, Q0, etc.) inserted by
+    # v_context_with_region for ISP releases that lack real subregion data,
+    # preventing duplicate (Year, NaN-Name) entries in the pivot.
+    df_by_reg = df_by_reg[df_by_reg['Name'].notna()]
+
     grouped = df_by_reg.groupby(['Data_source', 'Scenario_1', 'Scenario_2'])
     output_directory = output_directory = os.path.join(os.getcwd(), 'GETRC', 'ISP Images') #NOTE: Changed bu Steve to work locally #os.path.join('C:', os.sep, 'Users','andre','Documents','GETRC','ISP Images')
     os.makedirs(output_directory, exist_ok=True)
@@ -653,51 +649,53 @@ def plot_stack_by_reg_perc(
 
     
 
-isp_report = 'Final'
-
-#isp_report = 'Draft'
-## Change the scenario values since they are different for draft version
+# ---------------------------------------------------------------------------
+# Load data - all three releases in one pass.
+# Using "%" loads 2022 Final, 2024 Final, and 2026 Draft together.
+# ---------------------------------------------------------------------------
 (
- capacity,
- generation, 
- # storage_energy, 
- # storage_capacity, 
- # mapping, 
- context,
-) = get_data(
-    isp_report
+    capacity,
+    generation,
+    context,
+) = get_data("%")
+
+all_scenarios = (
+    context[['Data_source', 'Scenario_1', 'Scenario_2']]
+    .drop_duplicates()
+    .dropna(subset=['Data_source', 'Scenario_1', 'Scenario_2'])
+    .reset_index(drop=True)
 )
 
-all_scenarios = context[['Data_source','Scenario_1','Scenario_2']].drop_duplicates().dropna()
+# Core scenarios and their Optimal Development Paths for each ISP release.
 core_scenarios = pd.DataFrame([
-    {"ISP": "2022 " + isp_report+ " ISP", "core": "Hydrogen Superpower - Updated Inputs", "ODP": "CDP12"},
-    {"ISP": "2022 " + isp_report+ " ISP", "core": "Progressive Change - Updated Inputs", "ODP": "CDP12"},
-    {"ISP": "2022 " + isp_report+ " ISP", "core": "Slow Change - Updated Inputs", "ODP": "CDP12"},
-    {"ISP": "2022 " + isp_report+ " ISP", "core": "Step Change - Updated Inputs", "ODP": "CDP12"},
-    {"ISP": "2024 " + isp_report+ " ISP", "core": "Step Change - Core", "ODP": "CDP14"},
-    {"ISP": "2024 " + isp_report+ " ISP", "core": "Progressive Change - Core", "ODP": "CDP14"},
-    {"ISP": "2024 " + isp_report+ " ISP", "core": "Green Energy Exports - Core", "ODP": "CDP14"}
+    # 2022 Final ISP
+    {"ISP": "2022 Final ISP", "core": "Hydrogen Superpower - Updated Inputs", "ODP": "CDP12"},
+    {"ISP": "2022 Final ISP", "core": "Progressive Change - Updated Inputs",   "ODP": "CDP12"},
+    {"ISP": "2022 Final ISP", "core": "Slow Change - Updated Inputs",           "ODP": "CDP12"},
+    {"ISP": "2022 Final ISP", "core": "Step Change - Updated Inputs",           "ODP": "CDP12"},
+    # 2024 Final ISP
+    {"ISP": "2024 Final ISP", "core": "Step Change - Core",          "ODP": "CDP14"},
+    {"ISP": "2024 Final ISP", "core": "Progressive Change - Core",   "ODP": "CDP14"},
+    {"ISP": "2024 Final ISP", "core": "Green Energy Exports - Core", "ODP": "CDP14"},
+    # 2026 Draft ISP
+    {"ISP": "2026 Draft ISP", "core": "Slower Growth - Core",          "ODP": "CDP4 (ODP)"},
+    {"ISP": "2026 Draft ISP", "core": "Accelerated Transition - Core", "ODP": "CDP4 (ODP)"},
+    {"ISP": "2026 Draft ISP", "core": "Step Change - Core",            "ODP": "CDP4 (ODP)"},
 ])
+
+# Optimal Development Path CDP for each release.
 odp = pd.DataFrame({
-    "Data_source": [
-            "2022 " + isp_report+ " ISP",
-            "2024 " + isp_report+ " ISP"
-        ],
-    "Scenario_2": [
-            "CDP12",
-            "CDP14"
-        ]
+    "Data_source": ["2022 Final ISP", "2024 Final ISP", "2026 Draft ISP"],
+    "Scenario_2":  ["CDP12",          "CDP14",          "CDP4 (ODP)"],
 })
-# Reference scenarios will be highlighted in plots with thick black lines.
+
+# Reference scenarios are highlighted with thick black lines in plots.
 reference_scenarios = pd.DataFrame({
-    "ISP": ["2022 " + isp_report+ " ISP", 
-            "2024 " + isp_report+ " ISP"
-            ],
-    "core": ['Step Change - Updated Inputs',
-             'Step Change - Core'
-             ]
+    "ISP":  ["2022 Final ISP",                 "2024 Final ISP",    "2026 Draft ISP"],
+    "core": ["Step Change - Updated Inputs", "Step Change - Core", "Slower Growth - Core"],
 })
-all_scenarios_odp = all_scenarios.merge(odp, how = 'inner')
+
+all_scenarios_odp = all_scenarios.merge(odp, how='inner')
 
 # Generation technologies considered GPG. To be plotted.
 gpg_tech = [
@@ -715,55 +713,60 @@ coal_tech = [
     'Brown Coal',
     'Brown coal',
 ]
-# Filter capacity data.
-capacity_gpg = capacity[
-    (capacity.Technology.isin(coal_tech))
-]
-generation_gpg = generation[
-    (generation.Technology.isin(coal_tech))
-]
 
-# Max anunual generation = Installed Capacity X Hours in a day X Days in a year
+# No region filter needed here: 2022 stores coal at state level (Region=NULL→N0/Q0
+# synthetic codes), while 2024 Final and 2026 Draft store coal only at subregion
+# level (CNSW, CQ, SQ, VIC etc.) with no state-level rows at all. Each release
+# uses exactly one level, so there is no double-counting risk regardless of which
+# region codes are present. The NEM-total groupby (no Region column) correctly
+# sums across whatever level the data is stored at.
+capacity_gpg = capacity[capacity.Technology.isin(coal_tech)].copy()
+generation_gpg = generation[generation.Technology.isin(coal_tech)].copy()
+
+# Alias used by the subregion stacked-area plots (same data, clearer name).
+
+# Max annual generation = Installed Capacity X Hours in a day X Days in a year
 capacity_gpg['max_annual_gen'] = capacity_gpg['Value']*24*365
 
-# Installed capacity per year for each sceneario and CDP.
+# Installed capacity per year for each scenario and CDP (NEM total).
 capacity_gpg_sum = capacity_gpg.groupby(
     ['Data_source','Scenario_1','Scenario_2','Year'], as_index = False
 ).agg({'Value':'sum','max_annual_gen':'sum'})
-# Installed capacity per year for each sceneario, CDP and state.
+# Installed capacity per year for each scenario, CDP and state.
 capacity_gpg_sum_bystate = capacity_gpg.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Year'], as_index = False
 ).agg({'Value':'sum','max_annual_gen':'sum'})
-# Installed capacity per year for each sceneario, CDP, state and sub-region (only 2024 has sub-region granularity).
+# Installed capacity per year for each scenario, CDP, state and sub-region.
 capacity_gpg_sum_byregion = capacity_gpg.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Region','Year'], as_index = False
 ).agg({'Value':'sum','max_annual_gen':'sum'})
 
-# Forecasted generation per year for each sceneario and CDP.
+# Forecasted generation per year for each scenario and CDP (NEM total).
 generation_gpg_sum = generation_gpg.groupby(
     ['Data_source','Scenario_1','Scenario_2','Year'], as_index=False
 )['Value'].sum()
-# Forecasted generation per year for each sceneario, CDP and state.
+# Forecasted generation per year for each scenario, CDP and state.
 generation_gpg_sum_bystate = generation_gpg.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Year'], as_index=False
 )['Value'].sum()
-# Forecasted generation per year for each sceneario, CDP, state and sub-region (only 2024 has sub-region granularity).
+# Forecasted generation per year for each scenario, CDP, state and sub-region.
 generation_gpg_sum_byregion = generation_gpg.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Region','Year'], as_index=False
 )['Value'].sum()
 
 
-# Forecasted TOTAL generation per year for each sceneario and CDP.
-
-generation_pos = generation[generation.Value>0]
+# Forecasted TOTAL generation per year (all technologies, positive values only).
+# Each ISP release stores data at one consistent level (state or subregion) per
+# technology, so summing without a region filter gives correct NEM totals.
+generation_pos = generation[generation.Value > 0]
 generation_sum = generation_pos.groupby(
     ['Data_source','Scenario_1','Scenario_2','Year'], as_index=False
 )['Value'].sum()
-# Forecasted generation per year for each sceneario, CDP and state.
+# By state.
 generation_sum_bystate = generation_pos.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Year'], as_index=False
 )['Value'].sum()
-# Forecasted generation per year for each sceneario, CDP, state and sub-region (only 2024 has sub-region granularity).
+# By sub-region.
 generation_sum_byregion = generation_pos.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Region','Year'], as_index=False
 )['Value'].sum()
@@ -792,12 +795,12 @@ generation_sum_byregion['Value'] = generation_sum_byregion['GPG']/generation_sum
 
 # Utilization factor is ratio between Generation[GWh] / MAX_generation [GWh]
 util_factor_gpg_bystate = capacity_gpg_sum_bystate[['Data_source','Scenario_1','Scenario_2','State','Year','max_annual_gen']].merge(
-    generation_gpg_sum_bystate, 
+    generation_gpg_sum_bystate,
     how = 'left',
     on = ['Data_source','Scenario_1','Scenario_2','State','Year']
     )
 util_factor_gpg_byregion = capacity_gpg_sum_byregion[['Data_source','Scenario_1','Scenario_2','State','Region','Year','max_annual_gen']].merge(
-    generation_gpg_sum_byregion, 
+    generation_gpg_sum_byregion,
     how = 'left',
     on = ['Data_source','Scenario_1','Scenario_2','State','Region','Year']
     )
@@ -812,8 +815,8 @@ util_factor_gpg['Value'] = util_factor_gpg['Value']/util_factor_gpg['max_annual_
 
 
 # Plot to be highlighted (thick black line)
-highlight_isp = '2024 '+ isp_report + ' ISP'
-highlight_core = 'Step Change - Core'
+highlight_isp  = '2026 Draft ISP'
+highlight_core = 'Slower Growth - Core'
 
 max_value = 26
 # Plot 1: Core scenarios 
@@ -838,6 +841,7 @@ with PdfPages('Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf') as pdf:
             'Capacity [GW]',
             'Capacity',
             max_value,
+            pdf,
     )
 
     fig = plot_core_scenarios(
@@ -861,6 +865,7 @@ with PdfPages('Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf') as pdf:
             'UF [GWh / GWh x 100]',
             'UF',
             100,
+            pdf,
     )
 
     fig = plot_core_scenarios(
@@ -882,6 +887,7 @@ with PdfPages('Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf') as pdf:
         'Generation [GWh]',
         'Generation',
         140000,
+        pdf,
     )
 
 
@@ -1112,24 +1118,23 @@ core_all_cdp = core_scenarios[['ISP','core']].merge(
 # Sydney
 # Victoria
 # Central South Australia
-sub_regions = ['SQ','VIC','SNW','CSA']
+sub_regions = ['SQ', 'VIC', 'SNW', 'CSA']
+
+# Both 2024 Final and 2026 Draft have sub-region granularity.
+SUB_REGION_ISPS = ['2024 Final ISP', '2026 Draft ISP']
 
 for reg in sub_regions:
-    
+
     capacity_gpg_filt = capacity_gpg_sum_byregion[
         capacity_gpg_sum_byregion.Region == reg]
 
-    core_scenarios_filt = core_scenarios[
-        core_scenarios.ISP == '2024 Final ISP']
-    all_scenarios_odp_filt = all_scenarios_odp[
-        all_scenarios_odp.Data_source == '2024 Final ISP']
-    all_scenarios_filt = all_scenarios[
-        all_scenarios.Data_source == '2024 Final ISP']
-    
+    core_scenarios_filt    = core_scenarios[core_scenarios.ISP.isin(SUB_REGION_ISPS)]
+    all_scenarios_odp_filt = all_scenarios_odp[all_scenarios_odp.Data_source.isin(SUB_REGION_ISPS)]
+    all_scenarios_filt     = all_scenarios[all_scenarios.Data_source.isin(SUB_REGION_ISPS)]
+
     util_factor_gpg_byregion_filt = util_factor_gpg_byregion[
         util_factor_gpg_byregion.Region == reg]
 
-    
     plot_all_cdps(
             all_scenarios_odp_filt,
             all_scenarios_filt,
@@ -1153,20 +1158,14 @@ for reg in sub_regions:
     )
 
 
-
-
-
 for reg in sub_regions:
-    
+
     generation_gpg_filt = generation_gpg_sum_byregion[
         generation_gpg_sum_byregion.Region == reg]
 
-    core_scenarios_filt = core_scenarios[
-        core_scenarios.ISP == '2024 Final ISP']
-    all_scenarios_odp_filt = all_scenarios_odp[
-        all_scenarios_odp.Data_source == '2024 Final ISP']
-    all_scenarios_filt = all_scenarios[
-        all_scenarios.Data_source == '2024 Final ISP']
+    core_scenarios_filt    = core_scenarios[core_scenarios.ISP.isin(SUB_REGION_ISPS)]
+    all_scenarios_odp_filt = all_scenarios_odp[all_scenarios_odp.Data_source.isin(SUB_REGION_ISPS)]
+    all_scenarios_filt     = all_scenarios[all_scenarios.Data_source.isin(SUB_REGION_ISPS)]
 
     plot_all_cdps(
             all_scenarios_odp_filt,
