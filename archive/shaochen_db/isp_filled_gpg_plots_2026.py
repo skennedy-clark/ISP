@@ -1,15 +1,15 @@
-"""isp_filled_plots_2026.py
+"""isp_filled_gpg_plots_2026.py
 
-Produces filled-band comparison charts for ISP coal analysis.
+Produces filled-band comparison charts for ISP gas-powered generation (GPG) analysis.
 
 Each chart overlays transparent min/max bands, one per comparison group.
 No individual scenario lines are drawn inside or on top of the bands —
 the purpose is purely visual comparison of uncertainty ranges between groups.
 
 Outputs (three PDFs, one per metric):
-    Coal_filled_Capacity.pdf
-    Coal_filled_UF.pdf
-    Coal_filled_Generation.pdf
+    Gas_filled_Capacity.pdf
+    Gas_filled_UF.pdf
+    Gas_filled_Generation.pdf
 
 Each PDF has one page per COMPARISON_SET defined below.
 
@@ -94,7 +94,7 @@ COMPARISON_SETS = [
     # --------------------------------------------------------------------------
     # PAGE 1: All ODP scenarios — three ISP releases side by side
     # Each band = full spread of scenarios at the ODP CDP for that release.
-    # Shows how coal retirement uncertainty has shifted across ISP editions.
+    # Shows how GPG utilisation uncertainty has shifted across ISP editions.
     # --------------------------------------------------------------------------
     {
         "title": "All ODP scenarios — comparing ISP releases",
@@ -254,8 +254,8 @@ COMPARISON_SETS = [
 # Adjust if values exceed these bounds for a new release or technology scope.
 # ---------------------------------------------------------------------------
 MAX_CAPACITY   = 26       # GW
-MAX_UF         = 100      # percent
-MAX_GENERATION = 140000   # GWh
+MAX_UF         = 40       # percent — GPG utilisation factors are well below 100%
+MAX_GENERATION = 40000    # GWh — GPG generation is well below coal-era totals
 
 
 # ---------------------------------------------------------------------------
