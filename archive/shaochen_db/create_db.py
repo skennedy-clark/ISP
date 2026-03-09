@@ -46,7 +46,7 @@ Adding a new Data_source (e.g. a future ISP release)
 Input files (input_csv/)
 ------------------------
   name_map_technology.csv       - maps native xlsx technology names to standard names
-                                  columns: native_name, standard_name
+                                  columns: Native_name, preferred_name, standard_name
                                   edit when AEMO renames a technology between releases
 
   data_req_state_capacity.csv   - allowlist of technologies from the Capacity sheet
@@ -510,7 +510,7 @@ def _test_parse_filename() -> bool:
 
 def load_tech_map(path: Path) -> dict:
     """
-    Load native_name -> standard_name mapping from CSV.
+    Load Native_name -> standard_name mapping from CSV. The preferred_name column is ignored.
     Returns an empty dict if the file is missing (no standardisation applied).
     """
     if not path.exists():
@@ -519,7 +519,7 @@ def load_tech_map(path: Path) -> dict:
         )
         return {}
     df = pd.read_csv(path)
-    mapping = dict(zip(df["native_name"].str.strip(), df["standard_name"].str.strip()))
+    mapping = dict(zip(df["Native_name"].str.strip(), df["standard_name"].str.strip()))
     log.info(f"Technology map loaded: {len(mapping)} entries from {path.name}")
     return mapping
 

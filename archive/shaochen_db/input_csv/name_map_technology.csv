@@ -1,58 +1,58 @@
-native_name,standard_name
-Alkaline Electrolyser,Alkaline Electrolyser
-Biomass,Biomass
-Black Coal,Black Coal
-Black coal,Black Coal
-Borumba,Borumba
-Brown Coal,Brown Coal
-Brown coal,Brown Coal
-Coordinated CER Storage,Coordinated CER Storage
-Coordinated CER Storage Load,Coordinated CER Storage Load
-Coordinated CER storage,Coordinated CER Storage
-Coordinated CER storage load,Coordinated CER Storage Load
-Coordinated DER Storage,Coordinated DER Storage
-Coordinated DER Storage Load,Coordinated DER Storage Load
-DSP,DSP
-Deep Storage,Deep Storage
-Deep storage,Deep Storage
-Deep utility-scale storage,Deep Storage
-Distributed PV,Distributed PV
-Distributed Storage,Distributed Storage
-Distributed Storage Load,Distributed Storage Load
-Flexible Gas,Flexible Gas
-Flexible gas,Flexible Gas
-Flexible gas with CCS,Flexible Gas
-Hydro,Hydro
-Hydrogen Turbine,Hydrogen Turbine
-Large-scale storage,Large-scale Storage
-Medium Storage,Medium Storage
-Medium storage,Medium Storage
-Medium utility-scale storage,Medium Storage
-Mid-merit Gas,Mid-merit Gas
-Mid-merit Gas with CCS,Mid-merit Gas
-Mid-merit gas,Mid-merit Gas
-Offshore Wind,Offshore Wind
-Offshore wind,Offshore Wind
-Other renewable fuels,Other Renewable Fuels
-Passive CER Storage,Passive CER Storage
-Passive CER Storage Load,Passive CER Storage Load
-Passive CER storage,Passive CER Storage
-Passive CER storage load,Passive CER Storage Load
-Peaking Gas+Liquids,Peaking Gas+Liquids
-Rooftop and other small-scale solar,Rooftop and Other Small-scale Solar
-Shallow Storage,Shallow Storage
-Shallow storage,Shallow Storage
-Shallow utility-scale storage,Shallow Storage
-Snowy 2.0,Snowy 2.0
-Solar,Utility-scale Solar
-Solar Thermal,Solar Thermal
-Utility solar,Utility-scale Solar
-Utility storage,Utility-scale Storage
-Utility storage load,Utility-scale Storage Load
-Utility-scale Solar,Utility-scale Solar
-Utility-scale Storage,Utility-scale Storage
-Utility-scale Storage Load,Utility-scale Storage Load
-Utility-scale solar,Utility-scale Solar
-Utility-scale storage,Utility-scale Storage
-Utility-scale storage load,Utility-scale Storage Load
-Wind,Wind
+Native_name,preferred_name,standard_name
+Alkaline Electrolyser,Alkaline Electrolyser,Alkaline Electrolyser
+Biomass,Biomass,Biomass
+Black Coal,Black Coal,Black Coal
+Black coal,Black Coal,Black Coal
+Borumba,Borumba,Borumba
+Brown Coal,Brown Coal,Brown Coal
+Brown coal,Brown Coal,Brown Coal
+Coordinated CER Storage,Coordinated CER Storage,Coordinated CER Storage
+Coordinated CER Storage Load,Coordinated CER Storage Load,Coordinated CER Storage Load
+Coordinated CER storage,Coordinated CER Storage,Coordinated CER Storage
+Coordinated CER storage load,Coordinated CER Storage Load,Coordinated CER Storage Load
+Coordinated DER Storage,Coordinated DER Storage,Coordinated DER Storage
+Coordinated DER Storage Load,Coordinated DER Storage Load,Coordinated DER Storage Load
+DSP,DSP,DSP
+Deep Storage,Deep Storage,Deep Storage
+Deep storage,Deep Storage,Deep Storage
+Deep utility-scale storage,Deep Storage,Deep Storage
+Distributed PV,Distributed PV,Distributed PV
+Distributed Storage,Distributed Storage,Distributed Storage
+Distributed Storage Load,Distributed Storage Load,Distributed Storage Load
+Flexible Gas,Flexible Gas,Flexible Gas
+Flexible gas,Flexible Gas,Flexible Gas
+Flexible gas with CCS,Flexible Gas with CCS,Flexible Gas with CCS
+Hydro,Hydro,Hydro
+Hydrogen Turbine,Hydrogen Turbine,Hydrogen Turbine
+Large-scale storage,Large-scale Storage,Large-scale Storage
+Medium Storage,Medium Storage,Medium Storage
+Medium storage,Medium Storage,Medium Storage
+Medium utility-scale storage,Medium Storage,Medium Storage
+Mid-merit Gas,Mid-merit Gas,Mid-merit Gas
+Mid-merit Gas with CCS,Mid-merit Gas with CCS,Mid-merit Gas with CCS
+Mid-merit gas,Mid-merit Gas,Mid-merit Gas
+Offshore Wind,Offshore Wind,Offshore Wind
+Offshore wind,Offshore Wind,Offshore Wind
+Other renewable fuels,Other Renewable Fuels,Other Renewable Fuels
+Passive CER Storage,Passive CER Storage,Passive CER Storage
+Passive CER Storage Load,Passive CER Storage Load,Passive CER Storage Load
+Passive CER storage,Passive CER Storage,Passive CER Storage
+Passive CER storage load,Passive CER Storage Load,Passive CER Storage Load
+Peaking Gas+Liquids,Peaking Gas+Liquids,Peaking Gas+Liquids
+Rooftop and other small-scale solar,Rooftop and Other Small-scale Solar,Rooftop and Other Small-scale Solar
+Shallow Storage,Shallow Storage,Shallow Storage
+Shallow storage,Shallow Storage,Shallow Storage
+Shallow utility-scale storage,Shallow Storage,Shallow Storage
+Snowy 2.0,Snowy 2.0,Snowy 2.0
+Solar,Utility-scale Solar,Utility-scale Solar
+Solar Thermal,Solar Thermal,Solar Thermal
+Utility solar,Utility-scale Solar,Utility-scale Solar
+Utility storage,Utility-scale Storage,Utility-scale Storage
+Utility storage load,Utility-scale Storage Load,Utility-scale Storage Load
+Utility-scale Solar,Utility-scale Solar,Utility-scale Solar
+Utility-scale Storage,Utility-scale Storage,Utility-scale Storage
+Utility-scale Storage Load,Utility-scale Storage Load,Utility-scale Storage Load
+Utility-scale solar,Utility-scale Solar,Utility-scale Solar
+Utility-scale storage,Utility-scale Storage,Utility-scale Storage
+Utility-scale storage load,Utility-scale Storage Load,Utility-scale Storage Load
+Wind,Wind,Wind

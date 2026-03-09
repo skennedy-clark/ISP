@@ -1,4 +1,4 @@
-"""isp_filled_plots_2026.py
+"""isp_filled_coal_plots_2026.py
 
 Produces filled-band comparison charts for ISP coal analysis.
 
@@ -427,34 +427,37 @@ def plot_comparison_page(df_metric, comparison_set, ylabel, max_value):
 print("Loading data from ISP.db...")
 (capacity, generation, context) = get_data("%")
 
-coal_tech = ["Black Coal", "Black coal", "Brown Coal", "Brown coal"]
+# Coal technologies as standardised in ISP.db.
+# The pipeline maps all native spellings (Black coal, Brown coal etc.) to these
+# two standard names at load time, so only these two values appear in the DB.
+coal_tech = ["Black Coal", "Brown Coal"]
 
-capacity_gpg   = capacity[capacity.Technology.isin(coal_tech)].copy()
-generation_gpg = generation[generation.Technology.isin(coal_tech)].copy()
+capacity_coal   = capacity[capacity.Technology.isin(coal_tech)].copy()
+generation_coal = generation[generation.Technology.isin(coal_tech)].copy()
 
-capacity_gpg["max_annual_gen"] = capacity_gpg["Value"] * 24 * 365
+capacity_coal["max_annual_gen"] = capacity_coal["Value"] * 24 * 365
 
 # NEM-total aggregations.
 # No Region filter needed — each release stores data at exactly one level:
 #   2022 Final / 2024 Draft  →  state level   (Region = synthetic N0/Q0/...)
 #   2024 Final / 2026 Draft  →  subregion level (Region = CNSW/SQ/...)
 # Each set of subregion rows sums to the correct NEM total on its own.
-capacity_gpg_sum = capacity_gpg.groupby(
+capacity_coal_sum = capacity_coal.groupby(
     ["Data_source", "Scenario_1", "Scenario_2", "Year"], as_index=False
 ).agg({"Value": "sum", "max_annual_gen": "sum"})
 
-generation_gpg_sum = generation_gpg.groupby(
+generation_coal_sum = generation_coal.groupby(
     ["Data_source", "Scenario_1", "Scenario_2", "Year"], as_index=False
 )["Value"].sum()
 
 # Utilisation factor = actual generation / theoretical maximum (capacity × 8760h)
-util_factor_gpg = (
-    capacity_gpg_sum[["Data_source", "Scenario_1", "Scenario_2", "Year", "max_annual_gen"]]
-    .merge(generation_gpg_sum, how="inner",
+util_factor_coal = (
+    capacity_coal_sum[["Data_source", "Scenario_1", "Scenario_2", "Year", "max_annual_gen"]]
+    .merge(generation_coal_sum, how="inner",
            on=["Data_source", "Scenario_1", "Scenario_2", "Year"])
 )
-util_factor_gpg["Value"] = (
-    util_factor_gpg["Value"] / util_factor_gpg["max_annual_gen"] * 100
+util_factor_coal["Value"] = (
+    util_factor_coal["Value"] / util_factor_coal["max_annual_gen"] * 100
 )
 
 print(f"Data loaded. Rendering {len(COMPARISON_SETS)} comparison set(s) × 3 metrics...\n")
@@ -463,21 +466,21 @@ print(f"Data loaded. Rendering {len(COMPARISON_SETS)} comparison set(s) × 3 met
 METRICS = [
     {
         "name":      "Capacity",
-        "df":        capacity_gpg_sum,
+        "df":        capacity_coal_sum,
         "ylabel":    "Capacity [GW]",
         "max_value": MAX_CAPACITY,
         "outfile":   "Coal_filled_Capacity.pdf",
     },
     {
         "name":      "UF",
-        "df":        util_factor_gpg,
+        "df":        util_factor_coal,
         "ylabel":    "UF [GWh / GWh × 100]",
         "max_value": MAX_UF,
         "outfile":   "Coal_filled_UF.pdf",
     },
     {
         "name":      "Generation",
-        "df":        generation_gpg_sum,
+        "df":        generation_coal_sum,
         "ylabel":    "Generation [GWh]",
         "max_value": MAX_GENERATION,
         "outfile":   "Coal_filled_Generation.pdf",

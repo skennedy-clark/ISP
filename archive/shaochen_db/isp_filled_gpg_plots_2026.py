@@ -436,7 +436,7 @@ tech_map_df = pd.read_csv(TECH_MAP_CSV)
 # Expect columns like: Original_value, Standard_value
 tech_map = dict(
     zip(
-        tech_map_df["native_name"].astype(str).str.strip(),
+        tech_map_df["Native_name"].astype(str).str.strip(),
         tech_map_df["standard_name"].astype(str).str.strip(),
     )
 )

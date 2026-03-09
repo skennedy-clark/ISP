@@ -697,21 +697,12 @@ reference_scenarios = pd.DataFrame({
 
 all_scenarios_odp = all_scenarios.merge(odp, how='inner')
 
-# Generation technologies considered GPG. To be plotted.
-gpg_tech = [
-    'Mid-merit Gas',
-    'Mid-merit Gas with CCS',
-    'Peaking Gas+Liquids',
-    'Flexible gas',
-    'Flexible gas with CCS',
-    'Mid-merit gas',
-]
-
+# Coal technologies as standardised in ISP.db.
+# The pipeline maps all native spellings (Black coal, Brown coal etc.) to these
+# two standard names at load time, so only these two values appear in the DB.
 coal_tech = [
     'Black Coal',
-    'Black coal',
     'Brown Coal',
-    'Brown coal',
 ]
 
 # No region filter needed here: 2022 stores coal at state level (Region=NULL→N0/Q0
@@ -720,37 +711,35 @@ coal_tech = [
 # uses exactly one level, so there is no double-counting risk regardless of which
 # region codes are present. The NEM-total groupby (no Region column) correctly
 # sums across whatever level the data is stored at.
-capacity_gpg = capacity[capacity.Technology.isin(coal_tech)].copy()
-generation_gpg = generation[generation.Technology.isin(coal_tech)].copy()
-
-# Alias used by the subregion stacked-area plots (same data, clearer name).
+capacity_coal = capacity[capacity.Technology.isin(coal_tech)].copy()
+generation_coal = generation[generation.Technology.isin(coal_tech)].copy()
 
 # Max annual generation = Installed Capacity X Hours in a day X Days in a year
-capacity_gpg['max_annual_gen'] = capacity_gpg['Value']*24*365
+capacity_coal['max_annual_gen'] = capacity_coal['Value']*24*365
 
 # Installed capacity per year for each scenario and CDP (NEM total).
-capacity_gpg_sum = capacity_gpg.groupby(
+capacity_coal_sum = capacity_coal.groupby(
     ['Data_source','Scenario_1','Scenario_2','Year'], as_index = False
 ).agg({'Value':'sum','max_annual_gen':'sum'})
 # Installed capacity per year for each scenario, CDP and state.
-capacity_gpg_sum_bystate = capacity_gpg.groupby(
+capacity_coal_sum_bystate = capacity_coal.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Year'], as_index = False
 ).agg({'Value':'sum','max_annual_gen':'sum'})
 # Installed capacity per year for each scenario, CDP, state and sub-region.
-capacity_gpg_sum_byregion = capacity_gpg.groupby(
+capacity_coal_sum_byregion = capacity_coal.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Region','Year'], as_index = False
 ).agg({'Value':'sum','max_annual_gen':'sum'})
 
 # Forecasted generation per year for each scenario and CDP (NEM total).
-generation_gpg_sum = generation_gpg.groupby(
+generation_coal_sum = generation_coal.groupby(
     ['Data_source','Scenario_1','Scenario_2','Year'], as_index=False
 )['Value'].sum()
 # Forecasted generation per year for each scenario, CDP and state.
-generation_gpg_sum_bystate = generation_gpg.groupby(
+generation_coal_sum_bystate = generation_coal.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Year'], as_index=False
 )['Value'].sum()
 # Forecasted generation per year for each scenario, CDP, state and sub-region.
-generation_gpg_sum_byregion = generation_gpg.groupby(
+generation_coal_sum_byregion = generation_coal.groupby(
     ['Data_source','Scenario_1','Scenario_2','State','Region','Year'], as_index=False
 )['Value'].sum()
 
@@ -773,19 +762,19 @@ generation_sum_byregion = generation_pos.groupby(
 
 
 generation_sum = generation_sum.merge(
-    generation_gpg_sum.rename(columns={'Value':'GPG'}),
+    generation_coal_sum.rename(columns={'Value':'GPG'}),
     how = 'inner',
     on = ['Data_source','Scenario_1','Scenario_2','Year'],
 )
 generation_sum['Value'] = generation_sum['GPG']/generation_sum['Value']*100
 generation_sum_bystate = generation_sum_bystate.merge(
-    generation_gpg_sum_bystate.rename(columns={'Value':'GPG'}),
+    generation_coal_sum_bystate.rename(columns={'Value':'GPG'}),
     how = 'inner',
     on = ['Data_source','Scenario_1','Scenario_2','Year','State'],
 )
 generation_sum_bystate['Value'] = generation_sum_bystate['GPG']/generation_sum_bystate['Value']*100
 generation_sum_byregion = generation_sum_byregion.merge(
-    generation_gpg_sum_byregion.rename(columns={'Value':'GPG'}),
+    generation_coal_sum_byregion.rename(columns={'Value':'GPG'}),
     how = 'inner',
     on = ['Data_source','Scenario_1','Scenario_2','Year','State','Region'],
 )
@@ -794,24 +783,24 @@ generation_sum_byregion['Value'] = generation_sum_byregion['GPG']/generation_sum
 
 
 # Utilization factor is ratio between Generation[GWh] / MAX_generation [GWh]
-util_factor_gpg_bystate = capacity_gpg_sum_bystate[['Data_source','Scenario_1','Scenario_2','State','Year','max_annual_gen']].merge(
-    generation_gpg_sum_bystate,
+util_factor_coal_bystate = capacity_coal_sum_bystate[['Data_source','Scenario_1','Scenario_2','State','Year','max_annual_gen']].merge(
+    generation_coal_sum_bystate,
     how = 'left',
     on = ['Data_source','Scenario_1','Scenario_2','State','Year']
     )
-util_factor_gpg_byregion = capacity_gpg_sum_byregion[['Data_source','Scenario_1','Scenario_2','State','Region','Year','max_annual_gen']].merge(
-    generation_gpg_sum_byregion,
+util_factor_coal_byregion = capacity_coal_sum_byregion[['Data_source','Scenario_1','Scenario_2','State','Region','Year','max_annual_gen']].merge(
+    generation_coal_sum_byregion,
     how = 'left',
     on = ['Data_source','Scenario_1','Scenario_2','State','Region','Year']
     )
-util_factor_gpg = capacity_gpg_sum[['Data_source','Scenario_1','Scenario_2','Year','max_annual_gen']].merge(
-    generation_gpg_sum,
+util_factor_coal = capacity_coal_sum[['Data_source','Scenario_1','Scenario_2','Year','max_annual_gen']].merge(
+    generation_coal_sum,
     how = 'inner',
     on = ['Data_source','Scenario_1','Scenario_2','Year']
     )
-util_factor_gpg_bystate['Value'] = util_factor_gpg_bystate['Value']/util_factor_gpg_bystate['max_annual_gen']*100
-util_factor_gpg_byregion['Value'] = util_factor_gpg_byregion['Value']/util_factor_gpg_byregion['max_annual_gen']*100
-util_factor_gpg['Value'] = util_factor_gpg['Value']/util_factor_gpg['max_annual_gen']*100
+util_factor_coal_bystate['Value'] = util_factor_coal_bystate['Value']/util_factor_coal_bystate['max_annual_gen']*100
+util_factor_coal_byregion['Value'] = util_factor_coal_byregion['Value']/util_factor_coal_byregion['max_annual_gen']*100
+util_factor_coal['Value'] = util_factor_coal['Value']/util_factor_coal['max_annual_gen']*100
 
 
 # Plot to be highlighted (thick black line)
@@ -826,7 +815,7 @@ with PdfPages('Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf') as pdf:
             highlight_isp,
             highlight_core,
             core_scenarios,
-            capacity_gpg_sum,
+            capacity_coal_sum,
             'Capacity [GW]',
             'Capacity',
             max_value,
@@ -837,7 +826,7 @@ with PdfPages('Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf') as pdf:
             core_scenarios,
             all_scenarios_odp,
             reference_scenarios,
-            capacity_gpg_sum,
+            capacity_coal_sum,
             'Capacity [GW]',
             'Capacity',
             max_value,
@@ -848,7 +837,7 @@ with PdfPages('Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf') as pdf:
             highlight_isp,
             highlight_core,
             core_scenarios,
-            util_factor_gpg,
+            util_factor_coal,
             'UF [GWh / GWh x 100]',
             'UF',
             100,
@@ -861,7 +850,7 @@ with PdfPages('Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf') as pdf:
             core_scenarios,
             all_scenarios_odp,
             reference_scenarios,
-            util_factor_gpg,
+            util_factor_coal,
             'UF [GWh / GWh x 100]',
             'UF',
             100,
@@ -872,7 +861,7 @@ with PdfPages('Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf') as pdf:
         highlight_isp,
         highlight_core,
         core_scenarios,
-        generation_gpg_sum,
+        generation_coal_sum,
         'Generation [GWh]',
         'Generation',
         140000,
@@ -883,7 +872,7 @@ with PdfPages('Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf') as pdf:
         core_scenarios,
         all_scenarios_odp,
         reference_scenarios,
-        generation_gpg_sum,
+        generation_coal_sum,
         'Generation [GWh]',
         'Generation',
         140000,
@@ -931,7 +920,7 @@ plot_all_cdps(
         all_scenarios,
         core_scenarios,
         odp,
-        capacity_gpg_sum,
+        capacity_coal_sum,
         'Capacity [GW]',
         'Capacity - Coal',
         max_value,
@@ -943,7 +932,7 @@ plot_all_cdps(
         all_scenarios,
         core_scenarios,
         odp,
-        util_factor_gpg,
+        util_factor_coal,
         'UF [GWh / GWh x 100]',
         'UF - Coal',
         100,
@@ -954,7 +943,7 @@ plot_all_cdps(
         all_scenarios,
         core_scenarios,
         odp,
-        generation_gpg_sum,
+        generation_coal_sum,
         'Generation [GWh]',
         'Generation - Coal',
         140000,
@@ -981,7 +970,7 @@ stack_order_reg = [
 ]
 
 plot_stack_by_reg(
-        capacity_gpg,
+        capacity_coal,
         core_scenarios.rename(columns={'ISP':'Data_source','core':'Scenario_1','ODP':'Scenario_2',}),
         max_value,
         "2024_Coal_core_odp_capacity.pdf",
@@ -991,7 +980,7 @@ plot_stack_by_reg(
         'Capacity'
 )
 plot_stack_by_reg(
-        capacity_gpg,
+        capacity_coal,
         all_scenarios_odp,
         max_value,
         "2024_Coal_all_sc_odp_capacity.pdf",
@@ -1002,10 +991,10 @@ plot_stack_by_reg(
 )
 # UF 
 
-# util_factor_gpg_bystate
-# util_factor_gpg_byregion
+# util_factor_coal_bystate
+# util_factor_coal_byregion
 plot_stack_by_reg(
-        util_factor_gpg_byregion,
+        util_factor_coal_byregion,
         core_scenarios.rename(columns={'ISP':'Data_source','core':'Scenario_1','ODP':'Scenario_2',}),
         100,
         "2024_Coal_core_odp_UF_byregion.pdf",
@@ -1015,7 +1004,7 @@ plot_stack_by_reg(
         'UF'
 )
 plot_stack_by_reg(
-        util_factor_gpg_byregion,
+        util_factor_coal_byregion,
         all_scenarios_odp,
         100,
         "2024_Coal_all_scenarios_odp_UF.pdf",
@@ -1053,12 +1042,12 @@ generation_sum_byregion_filt = generation_sum_byregion_filt[generation_sum_byreg
 
 # 2022
 stack_order_state = ['QLD', 'NSW', 'VIC','SA', 'TAS']
-capacity_gpg_2022 = capacity_gpg[
-    capacity_gpg.Data_source == '2022 Final ISP']
-util_factor_gpg_bystate_2022 = util_factor_gpg_bystate[
-    util_factor_gpg_bystate.Data_source == '2022 Final ISP']
+capacity_coal_2022 = capacity_coal[
+    capacity_coal.Data_source == '2022 Final ISP']
+util_factor_coal_bystate_2022 = util_factor_coal_bystate[
+    util_factor_coal_bystate.Data_source == '2022 Final ISP']
 plot_stack_by_reg(
-        capacity_gpg_2022,
+        capacity_coal_2022,
         core_scenarios.rename(columns={'ISP':'Data_source','core':'Scenario_1','ODP':'Scenario_2',}),
         max_value,
         "2022_Coal_core_odp_capacity.pdf",
@@ -1069,7 +1058,7 @@ plot_stack_by_reg(
 )
 
 plot_stack_by_reg(
-        capacity_gpg_2022,
+        capacity_coal_2022,
         all_scenarios_odp,
         max_value,
         "2022_Coal_all_sc_odp_capacity.pdf",
@@ -1080,7 +1069,7 @@ plot_stack_by_reg(
 )
     
 plot_stack_by_reg(
-        util_factor_gpg_bystate_2022,
+        util_factor_coal_bystate_2022,
         core_scenarios.rename(columns={'ISP':'Data_source','core':'Scenario_1','ODP':'Scenario_2',}),
         100,
         "2022_Coal_core_odp_UF_bystate.pdf",
@@ -1091,7 +1080,7 @@ plot_stack_by_reg(
 )
 
 plot_stack_by_reg(
-        util_factor_gpg_bystate_2022,
+        util_factor_coal_bystate_2022,
         all_scenarios_odp,
         100,
         "2022_Coal_all_scenarios_odp_UF_bystate.pdf",
@@ -1125,22 +1114,22 @@ SUB_REGION_ISPS = ['2024 Final ISP', '2026 Draft ISP']
 
 for reg in sub_regions:
 
-    capacity_gpg_filt = capacity_gpg_sum_byregion[
-        capacity_gpg_sum_byregion.Region == reg]
+    capacity_coal_filt = capacity_coal_sum_byregion[
+        capacity_coal_sum_byregion.Region == reg]
 
     core_scenarios_filt    = core_scenarios[core_scenarios.ISP.isin(SUB_REGION_ISPS)]
     all_scenarios_odp_filt = all_scenarios_odp[all_scenarios_odp.Data_source.isin(SUB_REGION_ISPS)]
     all_scenarios_filt     = all_scenarios[all_scenarios.Data_source.isin(SUB_REGION_ISPS)]
 
-    util_factor_gpg_byregion_filt = util_factor_gpg_byregion[
-        util_factor_gpg_byregion.Region == reg]
+    util_factor_coal_byregion_filt = util_factor_coal_byregion[
+        util_factor_coal_byregion.Region == reg]
 
     plot_all_cdps(
             all_scenarios_odp_filt,
             all_scenarios_filt,
             core_scenarios_filt,
             odp,
-            capacity_gpg_filt,
+            capacity_coal_filt,
             'Capacity [GW]',
             f'{reg} - Capacity - Coal',
             6,
@@ -1151,7 +1140,7 @@ for reg in sub_regions:
             all_scenarios_filt,
             core_scenarios_filt,
             odp,
-            util_factor_gpg_byregion_filt,
+            util_factor_coal_byregion_filt,
             'UF [GWh / GWh x 100]',
             f'{reg} - UF - Coal',
             100,
@@ -1160,8 +1149,8 @@ for reg in sub_regions:
 
 for reg in sub_regions:
 
-    generation_gpg_filt = generation_gpg_sum_byregion[
-        generation_gpg_sum_byregion.Region == reg]
+    generation_coal_filt = generation_coal_sum_byregion[
+        generation_coal_sum_byregion.Region == reg]
 
     core_scenarios_filt    = core_scenarios[core_scenarios.ISP.isin(SUB_REGION_ISPS)]
     all_scenarios_odp_filt = all_scenarios_odp[all_scenarios_odp.Data_source.isin(SUB_REGION_ISPS)]
@@ -1172,7 +1161,7 @@ for reg in sub_regions:
             all_scenarios_filt,
             core_scenarios_filt,
             odp,
-            generation_gpg_filt,
+            generation_coal_filt,
             'Generation [GWh]',
             f'{reg} - Generation - Coal',
             140000,
