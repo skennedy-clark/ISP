@@ -1,14 +1,8 @@
 # ISP Plot Generator — User Guide
 
-A PySide6 (Python GUI) desktop application for generating ISP plots and exploring the relationships between scenarios. Dropdown menus and scenario lists are populated directly from the database.
-The application can produce PDF plots or, for reproducible research, a Python script that generates the same PDF plot.
+A PySide6 desktop application for generating ISP plots and exploring the relationships between scenarios. Dropdown menus and scenario lists are populated directly from the database. The application can produce PDF plots or, for reproducible research, a Python script that generates the same output.
 
----
-
-## Why PySide6
-
-PySide6 is the official Python binding for the Qt 6 framework, providing a modern and fully cross‑platform way to build desktop GUI applications.
-By using PySide6, we can build a local GUI application without needing to run a web server.
+Runs on Windows, macOS, and Linux as a local desktop application.
 
 ---
 
@@ -18,7 +12,7 @@ By using PySide6, we can build a local GUI application without needing to run a 
 pip install PySide6 matplotlib pandas pyyaml
 ```
 
-`pyyaml` is optional. If it is not installed the application falls back to a built-in config reader that handles the simple format used.
+`pyyaml` is optional. If it is not installed the application uses a built-in reader for the simple config format used.
 
 ---
 
@@ -70,7 +64,7 @@ Select a preset group from the dropdown:
 
 **Storage load technologies** (rows whose names end in `Load`, which represent consumption rather than generation) are excluded from all preset groups. They are available in the Custom option but unchecked by default.
 
-**Custom** reveals a scrollable checklist of all 35 technologies in the database. Check or uncheck individual technologies, or use the **All** / **None** buttons. This allows any combination — for example, mixing Hydro with Storage, or including a specific load technology.
+**Custom** reveals a scrollable checklist of all 35 technologies in the database. Check or uncheck individual technologies, or use the **All** / **None** buttons.
 
 The selected technologies are aggregated across all NEM regions before plotting. The aggregation respects the storage level of each ISP release (state-level or subregion-level) to avoid double-counting.
 
@@ -94,29 +88,29 @@ The **Scenarios to plot** group contains a table of rows. Each row defines one l
 | **Ref** | Checkbox — marks this row as the reference scenario, which overrides the colour and style and plots the line in solid black at a heavier weight |
 | **✕** | Removes this row |
 
-Changing **Release** repopulates the CDP dropdown from the database. Changing **CDP** repopulates the Scenario dropdown. Nothing is pre-selected or assumed — the dropdowns simply reflect what the database contains for that combination.
+Changing **Release** repopulates the CDP dropdown from the database. Changing **CDP** repopulates the Scenario dropdown. The dropdowns reflect what the database contains for that combination — nothing is pre-selected.
 
-Click **＋ Add scenario row** to add more rows. There is no limit. Each new row cycles through a default colour sequence.
+Click **＋ Add scenario row** to add more rows. Each new row cycles through a default colour sequence.
 
-The aggregation for each row is: sum capacity (or generation) across all technologies in the selected technology group, across all NEM regions, for that specific `(Data_source, Scenario_1, Scenario_2)` combination. Utilisation factor is then derived as generation divided by maximum possible generation (installed capacity × 8 760 hours).
+The aggregation for each row is: sum capacity (or generation) across all technologies in the selected technology group, across all NEM regions, for that specific `(Data_source, Scenario_1, Scenario_2)` combination. Utilisation factor is derived as generation divided by maximum possible generation (installed capacity × 8 760 hours).
 
 ### Plot types
 
 **Core — one line per scenario row above**: draws each row as a separate line on one axes.
 
-**Sensitivity — all CDPs for each scenario**: for each unique release in the scenario list, draws all CDPs available in the database for each scenario that appears in that release, using the CDP column of each row as the reference (drawn solid). Produces one page per release.
+**Sensitivity — all CDPs for each scenario**: for each unique release in the scenario list, draws all CDPs available in the database for each scenario in that release. The CDP selected in each row is drawn solid; other CDPs are drawn dashed at reduced opacity. Produces one page per release in both the preview and the saved PDF.
 
 ### Metrics
 
-Check any combination of **Capacity [GW]**, **Utilisation Factor [%]**, and **Generation [GWh]**. Each selected metric produces a separate page in the output PDF, and a separate page in the preview.
+Check any combination of **Capacity [GW]**, **Utilisation Factor [%]**, and **Generation [GWh]**. Each selected metric produces a separate page in the output PDF and in the preview.
 
-The **Y-axis max** spinboxes control the upper limit of each metric's axis. Adjust these if values exceed the defaults for the technology group you have selected.
+The **Y-axis max** spinboxes control the upper limit of each metric's axis.
 
 ### Preview and saving
 
-**▶ Preview** generates the core plot for all selected metrics and loads them into the preview pane. Use the **◀ Prev** and **Next ▶** buttons below the canvas to page through the figures. The counter shows the current page and total (e.g. `2 / 3`).
+**▶ Preview** generates figures for all selected metrics and plot types and loads them into the preview pane. Use the **◀ Prev** and **Next ▶** buttons below the canvas to page through. The counter shows the current page and total (e.g. `2 / 3`).
 
-**💾 Save PDF** writes all selected plot types and metrics to a single multi-page PDF in the output directory shown in the Output group.
+**💾 Save PDF** writes all selected plot types and metrics to a single multi-page PDF in the output directory.
 
 **🐍 Export script** writes a self-contained Python script to the output directory and opens it in your default editor. The script contains:
 - A SQL block describing which rows from the database feed the plots, including the technology filter
@@ -163,7 +157,7 @@ The tab opens with three pre-configured bands covering all available scenarios a
 
 ### Chart title
 
-The **Chart title** field sets the title shown on each figure. The metric name (Capacity, UF, or Generation) is prepended automatically, so a title of `All ODP scenarios — comparing ISP releases` produces pages titled `Capacity: All ODP scenarios — comparing ISP releases` and so on.
+The **Chart title** field sets the title shown on each figure. The metric name (Capacity, UF, or Generation) is prepended automatically, so a title of `Comparing ISP releases` produces pages titled `Capacity: Comparing ISP releases` and so on.
 
 ### Metrics and Y-axis
 
@@ -190,16 +184,24 @@ Both tabs have an **Output** group with a directory path label and a **Browse…
 
 ---
 
+## Saving and loading sessions
+
+The **💾 Save session** and **📂 Load session** buttons in the database bar save and restore the complete state of both tabs — scenario rows, band configurations, technology selection, metrics, y-axis limits, and output settings.
+
+Sessions are saved as YAML files. Any name and location can be chosen. To share a configuration, send the session file — the recipient can load it with **📂 Load session** and the dropdowns will repopulate from their own database.
+
+If `pyyaml` is not installed, sessions are saved in JSON format with a `.yaml` extension. Both formats load correctly.
+
+---
+
 ## Data notes
 
-**Aggregation**: all values shown are summed across the full NEM. No regional breakdown is applied in either tab.
+**Aggregation**: both tabs show NEM totals only — values are summed across all regions. There is no regional breakdown in either tab; this is by design to keep comparisons consistent across ISP releases that store data at different regional granularities.
 
-**Capacity units**: values queried from the database are in MW and are divided by 1 000 on load, so all capacity axes are in GW.
+**Capacity units**: values are stored in MW in the database and converted to GW on load.
 
 **Generation units**: values are in GWh as stored in the database.
 
-**Utilisation factor**: derived as `generation / (capacity × 8 760)`, expressed as a percentage. A value of 100 % means the technology ran at full nameplate capacity for every hour of the year.
+**Utilisation factor**: derived as `generation / (capacity × 8 760)`, expressed as a percentage.
 
-**Load technologies**: technologies whose names end in `Load` represent electricity consumption (negative generation in some data representations). They are excluded from all preset technology groups and unchecked by default in the Custom option. Including them in a generation or utilisation factor calculation will reduce the aggregate total.
-
-**Data cache**: once the database is loaded for a given tab, the raw data is held in memory for the session. If you change the database path mid-session, restart the application to ensure the new data is loaded.
+**Load technologies**: technologies whose names end in `Load` represent electricity consumption rather than generation. They are excluded from all preset technology groups and unchecked by default in the Custom option. Including them in a generation or utilisation factor calculation will reduce the aggregate total.

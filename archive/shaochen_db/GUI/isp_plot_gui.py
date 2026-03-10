@@ -101,60 +101,6 @@ def set_db_path(new_path: Path):
     _save_config(cfg)
 
 
-# ---------------------------------------------------------------------------
-# Import plot functions from the parent script.
-# isp_plots.py runs module-level code (data loading, plotting) on import,
-# which we must prevent. We import only the function objects we need by
-# temporarily redirecting the module so its __name__ != '__main__' guard
-# fires, but the top-level statements still run.
-#
-# Cleaner solution: the plot functions are self-contained — we redefine only
-# what we call, pulling them in via exec into a dedicated namespace so the
-# module-level side effects (get_data(), plot calls) are never executed.
-# ---------------------------------------------------------------------------
-
-def _load_plot_functions():
-    """
-    Load only the function definitions from isp_plots.py without executing
-    the module-level data loading and plotting calls.
-
-    We read the source, strip everything after the last function definition,
-    and exec the remainder into an isolated namespace.
-    """
-    src_path = PROJECT_DIR / "isp_plots.py"
-    if not src_path.exists():
-        raise FileNotFoundError(f"isp_plots.py not found at {src_path}")
-
-    source = src_path.read_text(encoding="utf-8")
-
-    # Split at the data-loading block (the first non-def/non-class top-level
-    # statement after the function definitions). The marker is the get_data("%")
-    # call which starts the module-level execution.
-    marker = "\n(\n    capacity,"
-    cutoff = source.find(marker)
-    if cutoff == -1:
-        # Fallback: find the load block comment
-        marker2 = "# Load data"
-        cutoff = source.find(marker2)
-
-    functions_source = source[:cutoff] if cutoff != -1 else source
-
-    ns: dict = {}
-    exec(compile(functions_source, str(src_path), "exec"), ns)
-    return ns
-
-
-try:
-    _plot_ns = _load_plot_functions()
-    plot_core_scenarios       = _plot_ns["plot_core_scenarios"]
-    plot_sensitivity_scenarios = _plot_ns["plot_sensitivity_scenarios"]
-    plot_all_cdps             = _plot_ns["plot_all_cdps"]
-    plot_stack_by_reg         = _plot_ns["plot_stack_by_reg"]
-    _PLOTS_LOADED = True
-except Exception as e:
-    _PLOTS_LOADED = False
-    _PLOT_LOAD_ERROR = str(e)
-
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -508,96 +454,6 @@ class CheckboxGroup(QScrollArea):
 # ---------------------------------------------------------------------------
 # Release panel — one collapsible block per ISP release
 # ---------------------------------------------------------------------------
-
-class ReleasePanel(QGroupBox):
-    """
-    Controls for a single ISP release:
-      - Enable/disable checkbox in title
-      - ODP selector (auto-populated from DB)
-      - Scenario checkboxes (populated from DB for chosen ODP)
-      - ODP/reference scenario selector
-    """
-
-    def __init__(self, release: str, parent=None):
-        super().__init__(parent)
-        self.release = release
-        self.setCheckable(True)
-        self.setChecked(True)
-        self.setTitle(release)
-
-        odp      = query_odp_for_release(release)   # None if not explicitly labelled
-        all_cdps = query_all_cdps_for_release(release)
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(6)
-
-        # ODP row
-        odp_row = QHBoxLayout()
-        odp_row.addWidget(QLabel("CDP:"))
-        self.odp_combo = QComboBox()
-        self.odp_combo.addItems(all_cdps)
-        if odp:
-            self.odp_combo.setCurrentText(odp)
-        # No fallback — if odp is None the combo just shows whatever DB returns first
-        # and the user must make an explicit selection
-        self.odp_combo.currentTextChanged.connect(self._refresh_scenarios)
-        odp_row.addWidget(self.odp_combo)
-        layout.addLayout(odp_row)
-
-        # Warning when no ODP is explicitly labelled in the DB
-        if not odp:
-            warn = QLabel("⚠ No CDP labelled (ODP) for this release — select manually.")
-            warn.setWordWrap(True)
-            warn.setStyleSheet("color: #c0392b; font-size: 8pt;")
-            layout.addWidget(warn)
-
-        # Scenarios — populate for whichever CDP is currently shown
-        layout.addWidget(QLabel("Scenarios:"))
-        initial_cdp = odp if odp else (all_cdps[0] if all_cdps else "")
-        scenarios   = query_scenarios_for_release(release, initial_cdp) if initial_cdp else []
-        self.scenario_group = CheckboxGroup(scenarios)
-        layout.addWidget(self.scenario_group)
-
-        # Select all / none
-        btn_row = QHBoxLayout()
-        btn_all  = QPushButton("All")
-        btn_none = QPushButton("None")
-        btn_all.setFixedWidth(50)
-        btn_none.setFixedWidth(50)
-        btn_all.clicked.connect(lambda: self.scenario_group.check_all(True))
-        btn_none.clicked.connect(lambda: self.scenario_group.check_all(False))
-        btn_row.addWidget(btn_all)
-        btn_row.addWidget(btn_none)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        # Highlight (reference) scenario — defaults to (none), never auto-selected
-        hi_row = QHBoxLayout()
-        hi_row.addWidget(QLabel("Highlight:"))
-        self.highlight_combo = QComboBox()
-        self.highlight_combo.addItems(["(none)"] + scenarios)
-        hi_row.addWidget(self.highlight_combo)
-        layout.addLayout(hi_row)
-
-    def _refresh_scenarios(self, cdp: str):
-        scenarios = query_scenarios_for_release(self.release, cdp)
-        self.scenario_group.set_items(scenarios)
-        self.highlight_combo.clear()
-        self.highlight_combo.addItems(["(none)"] + scenarios)
-
-    def is_active(self) -> bool:
-        return self.isChecked()
-
-    def get_odp(self) -> str:
-        return self.odp_combo.currentText()
-
-    def get_selected_scenarios(self) -> list[str]:
-        return self.scenario_group.checked_items()
-
-    def get_highlight(self) -> str | None:
-        h = self.highlight_combo.currentText()
-        return None if h == "(none)" else h
-
 
 # ---------------------------------------------------------------------------
 # Matplotlib canvas widget
@@ -1002,12 +858,16 @@ class CoreSensitivityTab(QWidget):
 
     # ------------------------------------------------------------------
     def _add_row(self, release: str = None, cdp: str = None,
-                 scenario: str = None, highlight: bool = False):
+                 scenario: str = None, highlight: bool = False,
+                 colour: str = None, linestyle: str = "-"):
         idx    = len(self._row_widgets)
         widget = ScenarioRowWidget(idx)
         widget.remove_requested.connect(self._remove_row)
         if release and cdp and scenario:
-            widget.set_values(release, cdp, scenario, highlight)
+            widget.set_values(release, cdp, scenario, highlight, colour, linestyle)
+        elif colour:
+            widget._colour = colour
+            widget._update_colour_btn()
         # Insert before the stretch at the end
         self._rows_layout.insertWidget(self._rows_layout.count() - 1, widget)
         self._row_widgets.append(widget)
@@ -1143,6 +1003,46 @@ class CoreSensitivityTab(QWidget):
             plt.tight_layout()
             return fig
 
+        def _draw_sensitivity(df_sum, ylabel, title, ymax):
+            """One figure per ISP release — all CDPs for each scenario.
+            Core scenarios drawn solid, sensitivities dashed.
+            Ref row drawn thick black. All other colours from row_styles."""
+            figs = []
+            for isp in core_scenarios["ISP"].unique():
+                isp_data   = all_scenarios_odp[all_scenarios_odp.Data_source == isp].copy()
+                core_names = set(core_scenarios[core_scenarios.ISP == isp]["core"].values)
+                ref_match  = reference_scenarios[reference_scenarios.ISP == isp]
+                highlight  = ref_match["core"].iloc[0] if not ref_match.empty else ""
+
+                fig, ax = plt.subplots(figsize=(12, 8))
+                for _, row in isp_data.iterrows():
+                    subset = df_sum[
+                        (df_sum.Data_source == isp) &
+                        (df_sum.Scenario_1  == row.Scenario_1) &
+                        (df_sum.Scenario_2  == row.Scenario_2)
+                    ]
+                    is_ref  = (row.Scenario_1 == highlight)
+                    is_core = (row.Scenario_1 in core_names)
+                    style   = row_styles.get((isp, row.Scenario_1), {})
+                    colour  = style.get("colour", "#888888")
+                    ls      = style.get("linestyle", "-")
+                    ax.plot(
+                        subset.Year, subset.Value,
+                        color     = "black" if is_ref else colour,
+                        linestyle = "-" if (is_ref or is_core) else "--",
+                        linewidth = 3.5 if is_ref else 1.0,
+                        label     = f"{row.Scenario_1} – {row.Scenario_2}" + (" ★" if is_ref else ""),
+                        alpha     = 1.0 if (is_ref or is_core) else 0.6,
+                    )
+                ax.set_title(f"{title} – core & sensitivity: {isp}", fontweight="bold", fontsize=16)
+                ax.set_ylabel(ylabel, fontweight="bold", fontsize=14)
+                ax.set_ylim(0, ymax)
+                ax.legend(loc="best", fontsize=9)
+                ax.grid()
+                plt.tight_layout()
+                figs.append(fig)
+            return figs
+
         figures = []
 
         if save_path:
@@ -1154,16 +1054,16 @@ class CoreSensitivityTab(QWidget):
                         plt.close(fig)
                         figures.append(fig)
                     if self.cb_sens_plot.isChecked():
-                        plot_sensitivity_scenarios(
-                            core_scenarios.copy(), all_scenarios_odp.copy(),
-                            reference_scenarios.copy(), df_sum,
-                            ylabel, title, ymax, pdf,
-                        )
+                        for fig in _draw_sensitivity(df_sum, ylabel, title, ymax):
+                            pdf.savefig(fig)
+                            plt.close(fig)
+                            figures.append(fig)
         else:
-            # Preview: core plot for all selected metrics
             for df_sum, ylabel, title, ymax in metrics:
                 if self.cb_core_plot.isChecked():
                     figures.append(_draw_core(df_sum, ylabel, title, ymax))
+                if self.cb_sens_plot.isChecked():
+                    figures.extend(_draw_sensitivity(df_sum, ylabel, title, ymax))
 
         return figures
 
@@ -1453,6 +1353,78 @@ print(f"Saved: {{OUTPUT_PDF}}")
             QMessageBox.critical(self, "Save error", str(e))
         finally:
             self.save_btn.setEnabled(True)
+
+    def get_state(self) -> dict:
+        """Return the full tab state as a serialisable dict."""
+        return {
+            "technology_group": self.tech_selector.group_combo.currentText(),
+            "technology_custom": self.tech_selector.custom_area.checked_items(),
+            "rows": [w.get_row() for w in self._row_widgets],
+            "metrics": {
+                "capacity":   self.cb_capacity.isChecked(),
+                "uf":         self.cb_uf.isChecked(),
+                "generation": self.cb_generation.isChecked(),
+            },
+            "ylim": {
+                "cap": self.ylim_cap.value(),
+                "uf":  self.ylim_uf.value(),
+                "gen": self.ylim_gen.value(),
+            },
+            "plot_types": {
+                "core":        self.cb_core_plot.isChecked(),
+                "sensitivity": self.cb_sens_plot.isChecked(),
+            },
+            "filename":   self.filename_edit.text(),
+            "output_dir": self.dir_label.text(),
+        }
+
+    def load_state(self, state: dict):
+        """Restore tab state from a dict previously produced by get_state()."""
+        # Technology
+        group = state.get("technology_group", "Coal")
+        self.tech_selector.group_combo.setCurrentText(group)
+        if group == "Custom":
+            custom = state.get("technology_custom", [])
+            for name, cb in self.tech_selector.custom_area._checkboxes.items():
+                cb.setChecked(name in custom)
+
+        # Rows — clear existing then rebuild
+        for w in list(self._row_widgets):
+            self._row_widgets.remove(w)
+            w.setParent(None)
+            w.deleteLater()
+        for row in state.get("rows", []):
+            self._add_row(
+                release   = row.get("ISP", ""),
+                cdp       = row.get("ODP", ""),
+                scenario  = row.get("core", ""),
+                highlight = row.get("highlight", False),
+                colour    = row.get("colour"),
+                linestyle = row.get("linestyle", "-"),
+            )
+
+        # Metrics
+        m = state.get("metrics", {})
+        self.cb_capacity.setChecked(m.get("capacity", True))
+        self.cb_uf.setChecked(m.get("uf", True))
+        self.cb_generation.setChecked(m.get("generation", True))
+
+        # Y-axis
+        y = state.get("ylim", {})
+        self.ylim_cap.setValue(y.get("cap", 26))
+        self.ylim_uf.setValue(y.get("uf", 100))
+        self.ylim_gen.setValue(y.get("gen", 140000))
+
+        # Plot types
+        pt = state.get("plot_types", {})
+        self.cb_core_plot.setChecked(pt.get("core", True))
+        self.cb_sens_plot.setChecked(pt.get("sensitivity", True))
+
+        # Output
+        if "filename" in state:
+            self.filename_edit.setText(state["filename"])
+        if "output_dir" in state:
+            self.dir_label.setText(state["output_dir"])
 
 
 def _tmp_path() -> str:
@@ -2212,11 +2184,68 @@ print("Done.")
         finally:
             self.save_btn.setEnabled(True)
 
+    def get_state(self) -> dict:
+        """Return full tab state as a serialisable dict."""
+        return {
+            "technology_group":  self.tech_selector.group_combo.currentText(),
+            "technology_custom": self.tech_selector.custom_area.checked_items(),
+            "title":             self.title_edit.text(),
+            "bands": [w.to_group_dict() or {} for w in self._band_widgets],
+            "metrics": {
+                "capacity":   self.cb_cap.isChecked(),
+                "uf":         self.cb_uf.isChecked(),
+                "generation": self.cb_gen.isChecked(),
+            },
+            "ylim": {
+                "cap": self.ylim_cap.value(),
+                "uf":  self.ylim_uf.value(),
+                "gen": self.ylim_gen.value(),
+            },
+            "filename":   self.filename_edit.text(),
+            "output_dir": self.dir_label.text(),
+        }
 
+    def load_state(self, state: dict):
+        """Restore tab state from a dict previously produced by get_state()."""
+        # Technology
+        group = state.get("technology_group", "Gas")
+        self.tech_selector.group_combo.setCurrentText(group)
+        if group == "Custom":
+            custom = state.get("technology_custom", [])
+            for name, cb in self.tech_selector.custom_area._checkboxes.items():
+                cb.setChecked(name in custom)
 
-# ---------------------------------------------------------------------------
-# Main window
-# ---------------------------------------------------------------------------
+        # Title
+        if "title" in state:
+            self.title_edit.setText(state["title"])
+
+        # Bands — clear existing then rebuild
+        for w in list(self._band_widgets):
+            self._band_widgets.remove(w)
+            w.setParent(None)
+            w.deleteLater()
+        for band in state.get("bands", []):
+            if band:
+                self._add_band(preset=band)
+
+        # Metrics
+        m = state.get("metrics", {})
+        self.cb_cap.setChecked(m.get("capacity", True))
+        self.cb_uf.setChecked(m.get("uf", True))
+        self.cb_gen.setChecked(m.get("generation", True))
+
+        # Y-axis
+        y = state.get("ylim", {})
+        self.ylim_cap.setValue(y.get("cap", 26))
+        self.ylim_uf.setValue(y.get("uf", 100))
+        self.ylim_gen.setValue(y.get("gen", 140000))
+
+        # Output
+        if "filename" in state:
+            self.filename_edit.setText(state["filename"])
+        if "output_dir" in state:
+            self.dir_label.setText(state["output_dir"])
+
 
 # ---------------------------------------------------------------------------
 # Main window
@@ -2229,7 +2258,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ISP Plot Generator")
         self.resize(1100, 780)
 
-        # Central widget wraps the DB bar + tabs
         central = QWidget()
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(6, 6, 6, 4)
@@ -2265,24 +2293,30 @@ class MainWindow(QMainWindow):
         self.db_status_label.setFixedWidth(90)
         db_layout.addWidget(self.db_status_label)
 
+        # Session save/load buttons in the DB bar
+        db_layout.addSpacing(12)
+        save_session_btn = QPushButton("💾  Save session")
+        load_session_btn = QPushButton("📂  Load session")
+        save_session_btn.setFixedWidth(115)
+        load_session_btn.setFixedWidth(115)
+        save_session_btn.setToolTip("Save current tab state to a YAML session file")
+        load_session_btn.setToolTip("Load a previously saved YAML session file")
+        save_session_btn.clicked.connect(self._save_session)
+        load_session_btn.clicked.connect(self._load_session)
+        db_layout.addWidget(save_session_btn)
+        db_layout.addWidget(load_session_btn)
+
         central_layout.addWidget(db_box)
 
         # ---- Tabs ----
         self.tabs = QTabWidget()
-        self.tabs.addTab(CoreSensitivityTab(), "Line Plots")
-        self.tabs.addTab(FilledBandTab(),      "Filled Band Comparison")
+        self._line_tab   = CoreSensitivityTab()
+        self._filled_tab = FilledBandTab()
+        self.tabs.addTab(self._line_tab,   "Line Plots")
+        self.tabs.addTab(self._filled_tab, "Filled Band Comparison")
         central_layout.addWidget(self.tabs)
 
-        # Status bar
         self.statusBar().showMessage(f"Config: {CONFIG_PATH}")
-
-        if not _PLOTS_LOADED:
-            QMessageBox.warning(
-                self,
-                "Could not load plot functions",
-                f"isp_plots.py could not be imported:\n\n{_PLOT_LOAD_ERROR}\n\n"
-                "Check that isp_plots.py is in the parent directory.",
-            )
 
         if not DB_PATH.exists():
             QMessageBox.warning(
@@ -2311,9 +2345,58 @@ class MainWindow(QMainWindow):
         self.db_status_label.setStyleSheet(
             "color: #27ae60;" if exists else "color: #c0392b;"
         )
-        self.statusBar().showMessage(
-            f"DB path updated and saved to {CONFIG_PATH}"
+        self.statusBar().showMessage(f"DB path updated and saved to {CONFIG_PATH}")
+
+    def _save_session(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save session", str(OUTPUT_DIR / "session.yaml"),
+            "YAML files (*.yaml *.yml);;All files (*)"
         )
+        if not path:
+            return
+        session = {
+            "line_plots":   self._line_tab.get_state(),
+            "filled_bands": self._filled_tab.get_state(),
+        }
+        _save_config(session)  # reuse the same writer
+        # _save_config writes to CONFIG_PATH — we want a separate file here
+        try:
+            import yaml
+            with open(path, "w", encoding="utf-8") as f:
+                yaml.dump(session, f, default_flow_style=False, allow_unicode=True)
+        except ImportError:
+            lines = ["# isp_plot_gui session\n"]
+            import json
+            lines.append(json.dumps(session, indent=2))
+            Path(path).write_text("".join(lines), encoding="utf-8")
+        self.statusBar().showMessage(f"Session saved: {path}")
+
+    def _load_session(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load session", str(OUTPUT_DIR),
+            "YAML files (*.yaml *.yml);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            import yaml
+            with open(path, "r", encoding="utf-8") as f:
+                session = yaml.safe_load(f)
+        except ImportError:
+            import json
+            text = Path(path).read_text(encoding="utf-8")
+            # Strip leading comment line if present
+            lines = [l for l in text.splitlines() if not l.startswith("#")]
+            session = json.loads("\n".join(lines))
+        except Exception as e:
+            QMessageBox.critical(self, "Load error", f"Could not read session file:\n{e}")
+            return
+
+        if "line_plots" in session:
+            self._line_tab.load_state(session["line_plots"])
+        if "filled_bands" in session:
+            self._filled_tab.load_state(session["filled_bands"])
+        self.statusBar().showMessage(f"Session loaded: {path}")
 
 
 # ---------------------------------------------------------------------------
