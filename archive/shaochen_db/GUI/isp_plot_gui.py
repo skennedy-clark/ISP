@@ -122,29 +122,22 @@ def query_releases() -> list[str]:
 
 def query_odp_for_release(release: str) -> str | None:
     """
-    Return the ODP Scenario_2 for a release by finding the CDP that appears
-    in the mapping table with '(ODP)' in its name, or fall back to the
-    highest-numbered CDP.
+    Return the ODP Scenario_2 for a release only if a CDP is explicitly
+    labelled with '(ODP)' in its name (e.g. 'CDP4 (ODP)').
+    Returns None if no such label exists — the caller must handle this
+    and require the user to make an explicit selection.
+    Never guesses or falls back to highest-numbered CDP.
     """
     with db_connect() as conn:
-        # Prefer any CDP labelled as ODP
         rows = conn.execute(
-            """SELECT DISTINCT Original_value FROM mapping
-               WHERE Data_source = ? AND Attribute_type = 'Scenario_2'
-               ORDER BY Original_value""",
+            """SELECT DISTINCT Scenario_2 FROM context
+               WHERE Data_source = ?
+               ORDER BY Scenario_2""",
             (release,),
         ).fetchall()
-    cdps = [r[0] for r in rows]
-    for cdp in cdps:
-        if "(ODP)" in cdp or "(odp)" in cdp.lower():
+    for (cdp,) in rows:
+        if cdp and ("(ODP)" in cdp or "(odp)" in cdp.lower()):
             return cdp
-    # Fall back to last alphabetically (CDP12 > CDP9 needs numeric sort)
-    if cdps:
-        def _cdp_sort(s):
-            import re
-            m = re.search(r"(\d+)", s)
-            return int(m.group(1)) if m else 0
-        return sorted(cdps, key=_cdp_sort)[-1]
     return None
 
 
@@ -234,6 +227,186 @@ class PlotWorker(QObject):
 
 
 # ---------------------------------------------------------------------------
+# Technology groups — all standardised names as stored in ISP.db
+# Load rows are excluded from generation groups by default.
+# ---------------------------------------------------------------------------
+
+TECH_GROUPS: dict[str, list[str]] = {
+    "Coal": [
+        "Black Coal",
+        "Brown Coal",
+    ],
+    "Gas": [
+        "Mid-merit Gas",
+        "Mid-merit Gas with CCS",
+        "Peaking Gas+Liquids",
+        "Flexible Gas",
+        "Flexible Gas with CCS",
+    ],
+    "Wind": [
+        "Wind",
+        "Offshore Wind",
+    ],
+    "Solar": [
+        "Utility-scale Solar",
+        "Rooftop and Other Small-scale Solar",
+        "Solar Thermal",
+        "Distributed PV",
+    ],
+    "Storage": [
+        "Large-scale Storage",
+        "Medium Storage",
+        "Shallow Storage",
+        "Deep Storage",
+        "Utility-scale Storage",
+        # Utility-scale Storage Load excluded by default
+        "Distributed Storage",
+        # Distributed Storage Load excluded by default
+    ],
+    "Coordinated CER": [
+        "Coordinated CER Storage",
+        # Coordinated CER Storage Load excluded by default
+        "Passive CER Storage",
+        # Passive CER Storage Load excluded by default
+    ],
+    "Coordinated DER": [
+        "Coordinated DER Storage",
+        # Coordinated DER Storage Load excluded by default
+    ],
+    "Hydro": [
+        "Hydro",
+        "Snowy 2.0",
+        "Borumba",
+    ],
+    "Hydrogen": [
+        "Hydrogen Turbine",
+        "Alkaline Electrolyser",
+    ],
+    "Other": [
+        "Biomass",
+        "Other Renewable Fuels",
+        "DSP",
+    ],
+    "Custom": [],   # populated dynamically from all technologies
+}
+
+# Full list for the Custom option — load rows available but unchecked by default
+ALL_TECHNOLOGIES = [
+    "Alkaline Electrolyser",
+    "Biomass",
+    "Black Coal",
+    "Borumba",
+    "Brown Coal",
+    "Coordinated CER Storage",
+    "Coordinated CER Storage Load",
+    "Coordinated DER Storage",
+    "Coordinated DER Storage Load",
+    "DSP",
+    "Deep Storage",
+    "Distributed PV",
+    "Distributed Storage",
+    "Distributed Storage Load",
+    "Flexible Gas",
+    "Flexible Gas with CCS",
+    "Hydro",
+    "Hydrogen Turbine",
+    "Large-scale Storage",
+    "Medium Storage",
+    "Mid-merit Gas",
+    "Mid-merit Gas with CCS",
+    "Offshore Wind",
+    "Other Renewable Fuels",
+    "Passive CER Storage",
+    "Passive CER Storage Load",
+    "Peaking Gas+Liquids",
+    "Rooftop and Other Small-scale Solar",
+    "Shallow Storage",
+    "Snowy 2.0",
+    "Solar Thermal",
+    "Utility-scale Solar",
+    "Utility-scale Storage",
+    "Utility-scale Storage Load",
+    "Wind",
+]
+
+# Technologies ending in "Load" — excluded (unchecked) by default in Custom
+_LOAD_TECHS = {t for t in ALL_TECHNOLOGIES if t.endswith("Load")}
+
+
+class TechnologySelector(QGroupBox):
+    """
+    Dropdown of technology group presets + an expandable Custom area.
+    Call .get_tech_filter() to get the active list of technology strings.
+    Call .get_group_label() to get a short name for script generation.
+    """
+
+    def __init__(self, default_group: str = "Gas", parent=None):
+        super().__init__("Technology", parent)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(4)
+
+        # Group preset dropdown
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Group:"))
+        self.group_combo = QComboBox()
+        self.group_combo.addItems(list(TECH_GROUPS.keys()))
+        self.group_combo.setCurrentText(default_group)
+        self.group_combo.currentTextChanged.connect(self._on_group_changed)
+        row.addWidget(self.group_combo, 1)
+        layout.addLayout(row)
+
+        # Summary label showing active techs (hidden for Custom)
+        self.summary_label = QLabel()
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setStyleSheet("color: #555; font-size: 8pt;")
+        layout.addWidget(self.summary_label)
+
+        # Custom checkbox area (visible only when Custom selected)
+        self.custom_area = CheckboxGroup([])
+        self.custom_area.set_items(ALL_TECHNOLOGIES, checked=False)
+        self.custom_area.setMinimumHeight(130)
+        self.custom_area.setVisible(False)
+        # Pre-check non-load techs for Custom
+        for name, cb in self.custom_area._checkboxes.items():
+            cb.setChecked(name not in _LOAD_TECHS)
+        layout.addWidget(self.custom_area)
+
+        # All / None buttons for Custom (hidden when not Custom)
+        self._custom_btns = QWidget()
+        btn_layout = QHBoxLayout(self._custom_btns)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_all  = QPushButton("All");  btn_all.setFixedWidth(40)
+        btn_none = QPushButton("None"); btn_none.setFixedWidth(44)
+        btn_all.clicked.connect(lambda: self.custom_area.check_all(True))
+        btn_none.clicked.connect(lambda: self.custom_area.check_all(False))
+        btn_layout.addWidget(btn_all)
+        btn_layout.addWidget(btn_none)
+        btn_layout.addStretch()
+        self._custom_btns.setVisible(False)
+        layout.addWidget(self._custom_btns)
+
+        self._on_group_changed(default_group)
+
+    def _on_group_changed(self, group: str):
+        is_custom = (group == "Custom")
+        self.custom_area.setVisible(is_custom)
+        self._custom_btns.setVisible(is_custom)
+        self.summary_label.setVisible(not is_custom)
+        if not is_custom:
+            techs = TECH_GROUPS.get(group, [])
+            self.summary_label.setText(", ".join(techs) if techs else "—")
+
+    def get_tech_filter(self) -> list[str]:
+        group = self.group_combo.currentText()
+        if group == "Custom":
+            return self.custom_area.checked_items()
+        return TECH_GROUPS.get(group, [])
+
+    def get_group_label(self) -> str:
+        return self.group_combo.currentText()
+
+
+# ---------------------------------------------------------------------------
 # Reusable: scrollable checkbox group
 # ---------------------------------------------------------------------------
 
@@ -297,7 +470,7 @@ class ReleasePanel(QGroupBox):
         self.setChecked(True)
         self.setTitle(release)
 
-        odp = query_odp_for_release(release) or ""
+        odp      = query_odp_for_release(release)   # None if not explicitly labelled
         all_cdps = query_all_cdps_for_release(release)
 
         layout = QVBoxLayout(self)
@@ -305,18 +478,28 @@ class ReleasePanel(QGroupBox):
 
         # ODP row
         odp_row = QHBoxLayout()
-        odp_row.addWidget(QLabel("ODP CDP:"))
+        odp_row.addWidget(QLabel("CDP:"))
         self.odp_combo = QComboBox()
         self.odp_combo.addItems(all_cdps)
-        if odp in all_cdps:
+        if odp:
             self.odp_combo.setCurrentText(odp)
+        # No fallback — if odp is None the combo just shows whatever DB returns first
+        # and the user must make an explicit selection
         self.odp_combo.currentTextChanged.connect(self._refresh_scenarios)
         odp_row.addWidget(self.odp_combo)
         layout.addLayout(odp_row)
 
-        # Scenarios
-        layout.addWidget(QLabel("Core scenarios:"))
-        scenarios = query_scenarios_for_release(release, odp) if odp else []
+        # Warning when no ODP is explicitly labelled in the DB
+        if not odp:
+            warn = QLabel("⚠ No CDP labelled (ODP) for this release — select manually.")
+            warn.setWordWrap(True)
+            warn.setStyleSheet("color: #c0392b; font-size: 8pt;")
+            layout.addWidget(warn)
+
+        # Scenarios — populate for whichever CDP is currently shown
+        layout.addWidget(QLabel("Scenarios:"))
+        initial_cdp = odp if odp else (all_cdps[0] if all_cdps else "")
+        scenarios   = query_scenarios_for_release(release, initial_cdp) if initial_cdp else []
         self.scenario_group = CheckboxGroup(scenarios)
         layout.addWidget(self.scenario_group)
 
@@ -333,7 +516,7 @@ class ReleasePanel(QGroupBox):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        # Highlight (reference) scenario
+        # Highlight (reference) scenario — defaults to (none), never auto-selected
         hi_row = QHBoxLayout()
         hi_row.addWidget(QLabel("Highlight:"))
         self.highlight_combo = QComboBox()
@@ -400,15 +583,171 @@ class PlotCanvas(QWidget):
         return self._fig
 
 
+# Default colours cycled across scenario rows
+_ROW_COLOURS = [
+    "#000000",  # black
+    "#E07B39",  # orange
+    "#4C72B0",  # blue
+    "#2CA02C",  # green
+    "#9467BD",  # purple
+    "#D62728",  # red
+    "#8C564B",  # brown
+    "#E377C2",  # pink
+    "#7F7F7F",  # grey
+    "#17BECF",  # cyan
+]
+
+_LINESTYLES = [
+    ("Solid",        "-"),
+    ("Dashed",       "--"),
+    ("Dotted",       ":"),
+    ("Dash-dot",     "-."),
+]
+
+
 # ---------------------------------------------------------------------------
 # Core / Sensitivity tab
 # ---------------------------------------------------------------------------
+
+class ScenarioRowWidget(QWidget):
+    """
+    One row: Release | CDP | Scenario | colour | linestyle | Ref | ✕
+    """
+    remove_requested = Signal(object)
+
+    def __init__(self, index: int, parent=None):
+        super().__init__(parent)
+        self._index  = index
+        self._colour = _ROW_COLOURS[index % len(_ROW_COLOURS)]
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setSpacing(4)
+
+        # Release
+        self.release_combo = QComboBox()
+        self.release_combo.setMinimumWidth(130)
+        try:
+            self.release_combo.addItems(query_releases())
+        except Exception:
+            pass
+        self.release_combo.currentTextChanged.connect(self._refresh_cdps)
+        layout.addWidget(self.release_combo)
+
+        # CDP
+        self.cdp_combo = QComboBox()
+        self.cdp_combo.setFixedWidth(100)
+        self.cdp_combo.currentTextChanged.connect(self._refresh_scenarios)
+        layout.addWidget(self.cdp_combo)
+
+        # Scenario
+        self.scenario_combo = QComboBox()
+        self.scenario_combo.setMinimumWidth(180)
+        layout.addWidget(self.scenario_combo, 1)
+
+        # Colour picker
+        self.colour_btn = QPushButton()
+        self.colour_btn.setFixedWidth(26)
+        self.colour_btn.setFixedHeight(24)
+        self.colour_btn.setToolTip("Line colour")
+        self._update_colour_btn()
+        self.colour_btn.clicked.connect(self._pick_colour)
+        layout.addWidget(self.colour_btn)
+
+        # Linestyle
+        self.style_combo = QComboBox()
+        self.style_combo.setFixedWidth(82)
+        for label, _ in _LINESTYLES:
+            self.style_combo.addItem(label)
+        layout.addWidget(self.style_combo)
+
+        # Ref (highlight / thick line)
+        self.highlight_cb = QCheckBox("Ref")
+        self.highlight_cb.setToolTip("Reference scenario — plotted with linewidth 3.5")
+        self.highlight_cb.setFixedWidth(42)
+        layout.addWidget(self.highlight_cb)
+
+        # Remove
+        rm_btn = QPushButton("✕")
+        rm_btn.setFixedWidth(26)
+        rm_btn.setFixedHeight(24)
+        rm_btn.clicked.connect(lambda: self.remove_requested.emit(self))
+        layout.addWidget(rm_btn)
+
+        # Populate CDPs for initial release
+        self._refresh_cdps(self.release_combo.currentText())
+
+    # ------------------------------------------------------------------
+    def _refresh_cdps(self, release: str):
+        self.cdp_combo.blockSignals(True)
+        self.cdp_combo.clear()
+        cdps = query_all_cdps_for_release(release) if release else []
+        self.cdp_combo.addItems(cdps)
+        self.cdp_combo.blockSignals(False)
+        self._refresh_scenarios(self.cdp_combo.currentText())
+
+    def _refresh_scenarios(self, cdp: str):
+        self.scenario_combo.clear()
+        release   = self.release_combo.currentText()
+        scenarios = query_scenarios_for_release(release, cdp) if (release and cdp) else []
+        self.scenario_combo.addItems(scenarios)
+
+    def _pick_colour(self):
+        from PySide6.QtWidgets import QColorDialog
+        from PySide6.QtGui import QColor
+        c = QColorDialog.getColor(QColor(self._colour), self, "Choose line colour")
+        if c.isValid():
+            self._colour = c.name()
+            self._update_colour_btn()
+
+    def _update_colour_btn(self):
+        self.colour_btn.setStyleSheet(
+            f"background-color: {self._colour}; border: 1px solid #888;"
+        )
+
+    # ------------------------------------------------------------------
+    def set_values(self, release: str, cdp: str, scenario: str,
+                   highlight: bool = False, colour: str = None, linestyle: str = "-"):
+        if release in [self.release_combo.itemText(i) for i in range(self.release_combo.count())]:
+            self.release_combo.setCurrentText(release)
+        cdps = query_all_cdps_for_release(release)
+        self.cdp_combo.clear()
+        self.cdp_combo.addItems(cdps)
+        if cdp in cdps:
+            self.cdp_combo.setCurrentText(cdp)
+        scenarios = query_scenarios_for_release(release, cdp)
+        self.scenario_combo.clear()
+        self.scenario_combo.addItems(scenarios)
+        if scenario in scenarios:
+            self.scenario_combo.setCurrentText(scenario)
+        self.highlight_cb.setChecked(highlight)
+        if colour:
+            self._colour = colour
+            self._update_colour_btn()
+        for i, (_, ls) in enumerate(_LINESTYLES):
+            if ls == linestyle:
+                self.style_combo.setCurrentIndex(i)
+                break
+
+    def get_row(self) -> dict:
+        ls_index = self.style_combo.currentIndex()
+        linestyle = _LINESTYLES[ls_index][1] if ls_index >= 0 else "-"
+        return {
+            "ISP":       self.release_combo.currentText(),
+            "core":      self.scenario_combo.currentText(),
+            "ODP":       self.cdp_combo.currentText(),
+            "highlight": self.highlight_cb.isChecked(),
+            "colour":    self._colour,
+            "linestyle": linestyle,
+        }
+
 
 class CoreSensitivityTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._data_cache = None   # loaded once, reused
+        self._data_cache = None
+        self._row_widgets: list[ScenarioRowWidget] = []
 
         main_split = QSplitter(Qt.Horizontal, self)
         main_layout = QVBoxLayout(self)
@@ -421,34 +760,47 @@ class CoreSensitivityTab(QWidget):
         left_widget = QWidget()
         left_scroll.setWidget(left_widget)
         left_layout = QVBoxLayout(left_widget)
-        left_layout.setSpacing(10)
+        left_layout.setSpacing(8)
         main_split.addWidget(left_scroll)
 
-        # Technology filter
-        tech_box = QGroupBox("Technology")
-        tech_layout = QVBoxLayout(tech_box)
-        self.coal_rb  = QRadioButton("Coal (Black Coal + Brown Coal)")
-        self.gpg_rb   = QRadioButton("Gas (Mid-merit + Peaking + Flexible)")
-        self.coal_rb.setChecked(True)
-        tech_layout.addWidget(self.coal_rb)
-        tech_layout.addWidget(self.gpg_rb)
-        left_layout.addWidget(tech_box)
+        # Technology
+        self.tech_selector = TechnologySelector(default_group="Coal")
+        left_layout.addWidget(self.tech_selector)
 
-        # Release panels — populated from DB
-        releases_box = QGroupBox("ISP Releases && Scenarios")
-        releases_layout = QVBoxLayout(releases_box)
-        self._release_panels: dict[str, ReleasePanel] = {}
-        try:
-            releases = query_releases()
-        except Exception:
-            releases = []
+        # Scenario rows
+        rows_box = QGroupBox("Scenarios to plot")
+        rows_box_layout = QVBoxLayout(rows_box)
 
-        for rel in releases:
-            panel = ReleasePanel(rel)
-            releases_layout.addWidget(panel)
-            self._release_panels[rel] = panel
+        # Column headers
+        hdr = QHBoxLayout()
+        for text, width in [("Release", 130), ("CDP", 100), ("Scenario", 0),
+                            ("Col", 26), ("Style", 82), ("Ref", 42), ("", 26)]:
+            lbl = QLabel(text)
+            lbl.setStyleSheet("font-weight: bold; font-size: 8pt; color: #555;")
+            if width:
+                lbl.setFixedWidth(width)
+            hdr.addWidget(lbl, 0 if width else 1)
+        rows_box_layout.addLayout(hdr)
 
-        left_layout.addWidget(releases_box)
+        # Scrollable rows container
+        rows_scroll = QScrollArea()
+        rows_scroll.setWidgetResizable(True)
+        rows_scroll.setMinimumHeight(200)
+        rows_scroll.setFrameShape(QFrame.NoFrame)
+        self._rows_container = QWidget()
+        self._rows_layout = QVBoxLayout(self._rows_container)
+        self._rows_layout.setSpacing(2)
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.addStretch()
+        rows_scroll.setWidget(self._rows_container)
+        rows_box_layout.addWidget(rows_scroll)
+
+        # Add row button
+        add_btn = QPushButton("＋ Add scenario row")
+        add_btn.setFixedHeight(28)
+        add_btn.clicked.connect(lambda: self._add_row())
+        rows_box_layout.addWidget(add_btn)
+        left_layout.addWidget(rows_box)
 
         # Metrics
         metrics_box = QGroupBox("Metrics to plot")
@@ -484,17 +836,15 @@ class CoreSensitivityTab(QWidget):
         ylim_form.addLayout(ylim_right)
         left_layout.addWidget(ylim_box)
 
-        # Plot type
+        # Plot types
         type_box = QGroupBox("Plot types")
         type_layout = QVBoxLayout(type_box)
-        self.cb_core_plot    = QCheckBox("Core scenarios (ODP)")
-        self.cb_sens_plot    = QCheckBox("Sensitivity scenarios (ODP)")
-        self.cb_allcdp_plot  = QCheckBox("All CDPs per scenario")
+        self.cb_core_plot = QCheckBox("Core — one line per scenario row above")
+        self.cb_sens_plot = QCheckBox("Sensitivity — all CDPs for each scenario")
         self.cb_core_plot.setChecked(True)
         self.cb_sens_plot.setChecked(True)
-        self.cb_allcdp_plot.setChecked(False)
-        for cb in (self.cb_core_plot, self.cb_sens_plot, self.cb_allcdp_plot):
-            type_layout.addWidget(cb)
+        type_layout.addWidget(self.cb_core_plot)
+        type_layout.addWidget(self.cb_sens_plot)
         left_layout.addWidget(type_box)
 
         # Output
@@ -502,10 +852,9 @@ class CoreSensitivityTab(QWidget):
         out_layout = QVBoxLayout(out_box)
         fn_row = QHBoxLayout()
         fn_row.addWidget(QLabel("Filename:"))
-        self.filename_edit = QLineEdit("Coal_Cap_UF_Core_ODP_and_ODP_all_sensitivity.pdf")
+        self.filename_edit = QLineEdit("isp_line_plots.pdf")
         fn_row.addWidget(self.filename_edit)
         out_layout.addLayout(fn_row)
-
         dir_row = QHBoxLayout()
         self.dir_label = QLabel(str(OUTPUT_DIR))
         self.dir_label.setWordWrap(True)
@@ -517,7 +866,7 @@ class CoreSensitivityTab(QWidget):
         out_layout.addLayout(dir_row)
         left_layout.addWidget(out_box)
 
-        # Action buttons
+        # Buttons
         btn_row = QHBoxLayout()
         self.preview_btn = QPushButton("▶  Preview")
         self.save_btn    = QPushButton("💾  Save PDF")
@@ -541,8 +890,33 @@ class CoreSensitivityTab(QWidget):
         # ---- Right: preview ----
         self.canvas = PlotCanvas()
         main_split.addWidget(self.canvas)
-        main_split.setSizes([360, 700])
+        main_split.setSizes([560, 540])
 
+        # Start with three blank rows
+        for _ in range(3):
+            self._add_row()
+
+    # ------------------------------------------------------------------
+    def _add_row(self, release: str = None, cdp: str = None,
+                 scenario: str = None, highlight: bool = False):
+        idx    = len(self._row_widgets)
+        widget = ScenarioRowWidget(idx)
+        widget.remove_requested.connect(self._remove_row)
+        if release and cdp and scenario:
+            widget.set_values(release, cdp, scenario, highlight)
+        # Insert before the stretch at the end
+        self._rows_layout.insertWidget(self._rows_layout.count() - 1, widget)
+        self._row_widgets.append(widget)
+
+    def _remove_row(self, widget: ScenarioRowWidget):
+        if len(self._row_widgets) <= 1:
+            self.status_label.setText("At least one scenario row is required.")
+            return
+        self._row_widgets.remove(widget)
+        widget.setParent(None)
+        widget.deleteLater()
+
+    # ------------------------------------------------------------------
     def _browse_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Choose output directory", str(OUTPUT_DIR))
         if d:
@@ -552,45 +926,36 @@ class CoreSensitivityTab(QWidget):
         return Path(self.dir_label.text()) / self.filename_edit.text()
 
     def _build_scenario_tables(self):
-        """
-        Build core_scenarios, odp, reference_scenarios, all_scenarios_odp
-        from the current GUI selections.
-        """
-        core_rows = []
-        odp_rows  = []
-        ref_rows  = []
+        """Build core_scenarios, odp, reference_scenarios from the row widgets."""
+        rows = [w.get_row() for w in self._row_widgets
+                if w.get_row()["core"] and w.get_row()["ISP"]]
+        if not rows:
+            raise ValueError("No scenario rows configured.")
 
-        for rel, panel in self._release_panels.items():
-            if not panel.is_active():
-                continue
-            cdp       = panel.get_odp()
-            scenarios = panel.get_selected_scenarios()
-            highlight = panel.get_highlight()
+        core_scenarios = pd.DataFrame([
+            {"ISP": r["ISP"], "core": r["core"], "ODP": r["ODP"],
+             "colour": r["colour"], "linestyle": r["linestyle"]}
+            for r in rows
+        ])
 
-            for scen in scenarios:
-                core_rows.append({"ISP": rel, "core": scen, "ODP": cdp})
+        # odp: unique (release, CDP) pairs from the rows
+        odp = (
+            core_scenarios[["ISP", "ODP"]]
+            .drop_duplicates()
+            .rename(columns={"ISP": "Data_source", "ODP": "Scenario_2"})
+        )
 
-            odp_rows.append({"Data_source": rel, "Scenario_2": cdp})
-
-            if highlight:
-                ref_rows.append({"ISP": rel, "core": highlight})
-            elif scenarios:
-                ref_rows.append({"ISP": rel, "core": scenarios[0]})
-
-        if not core_rows:
-            raise ValueError("No scenarios selected. Enable at least one release and select scenarios.")
-
-        core_scenarios    = pd.DataFrame(core_rows)
-        odp               = pd.DataFrame(odp_rows)
-        reference_scenarios = pd.DataFrame(ref_rows)
+        # reference: rows with highlight checked
+        ref_rows = [r for r in rows if r["highlight"]]
+        reference_scenarios = pd.DataFrame([
+            {"ISP": r["ISP"], "core": r["core"]}
+            for r in ref_rows
+        ]) if ref_rows else pd.DataFrame(columns=["ISP", "core"])
 
         return core_scenarios, odp, reference_scenarios
 
     def _get_tech_filter(self) -> list[str]:
-        if self.coal_rb.isChecked():
-            return ["Black Coal", "Brown Coal"]
-        return ["Mid-merit Gas", "Mid-merit Gas with CCS",
-                "Peaking Gas+Liquids", "Flexible Gas", "Flexible Gas with CCS"]
+        return self.tech_selector.get_tech_filter()
 
     def _prepare_data(self):
         """Load and aggregate data. Cached after first load."""
@@ -624,19 +989,20 @@ class CoreSensitivityTab(QWidget):
         return cap_sum, gen_sum, uf, all_scenarios
 
     def _build_figures(self, save_path: Path | None = None):
-        """Build all selected figures. Returns list of (fig, title) tuples."""
+        """Build all selected figures. Returns list of figures."""
         core_scenarios, odp, reference_scenarios = self._build_scenario_tables()
         cap_sum, gen_sum, uf, all_scenarios = self._prepare_data()
 
         all_scenarios_odp = all_scenarios.merge(odp, how="inner")
 
-        # Determine highlight for plot_core_scenarios
-        if not reference_scenarios.empty:
-            highlight_isp  = reference_scenarios.iloc[0]["ISP"]
-            highlight_core = reference_scenarios.iloc[0]["core"]
-        else:
-            highlight_isp  = core_scenarios.iloc[0]["ISP"]
-            highlight_core = core_scenarios.iloc[0]["core"]
+        # Per-row style info keyed by (ISP, core)
+        row_styles = {
+            (r.get_row()["ISP"], r.get_row()["core"]): r.get_row()
+            for r in self._row_widgets
+        }
+
+        highlight_isp  = reference_scenarios.iloc[0]["ISP"]  if not reference_scenarios.empty else ""
+        highlight_core = reference_scenarios.iloc[0]["core"] if not reference_scenarios.empty else ""
 
         metrics = []
         if self.cb_capacity.isChecked():
@@ -646,44 +1012,56 @@ class CoreSensitivityTab(QWidget):
         if self.cb_generation.isChecked():
             metrics.append((gen_sum, "Generation [GWh]",      "Generation", self.ylim_gen.value()))
 
+        def _draw_core(df_sum, ylabel, title, ymax):
+            fig, ax = plt.subplots(figsize=(12, 8))
+            for _, row in core_scenarios.iterrows():
+                subset = df_sum[
+                    (df_sum.Data_source == row["ISP"]) &
+                    (df_sum.Scenario_1  == row["core"]) &
+                    (df_sum.Scenario_2  == row["ODP"])
+                ]
+                style   = row_styles.get((row["ISP"], row["core"]), {})
+                colour  = style.get("colour", "#000000")
+                ls      = style.get("linestyle", "-")
+                is_ref  = (row["ISP"] == highlight_isp and row["core"] == highlight_core)
+                ax.plot(
+                    subset.Year, subset.Value,
+                    color     = "black" if is_ref else colour,
+                    linestyle = "-" if is_ref else ls,
+                    linewidth = 3.5 if is_ref else 1.5,
+                    label     = f"{row['ISP']} – {row['core']}" + (" ★" if is_ref else ""),
+                )
+            ax.set_title(f"Core Scenarios – {title}", fontweight="bold", fontsize=16)
+            ax.set_ylabel(ylabel, fontweight="bold", fontsize=14)
+            ax.set_ylim(0, ymax)
+            ax.legend(loc="best", fontsize=11)
+            ax.grid()
+            plt.tight_layout()
+            return fig
+
         figures = []
 
         if save_path:
             with PdfPages(save_path) as pdf:
                 for df_sum, ylabel, title, ymax in metrics:
                     if self.cb_core_plot.isChecked():
-                        fig = plot_core_scenarios(
-                            highlight_isp, highlight_core,
-                            core_scenarios.copy(), df_sum, ylabel, title, ymax,
-                        )
+                        fig = _draw_core(df_sum, ylabel, title, ymax)
                         pdf.savefig(fig)
+                        plt.close(fig)
                         figures.append(fig)
-
                     if self.cb_sens_plot.isChecked():
-                        # plot_sensitivity_scenarios writes directly to pdf
                         plot_sensitivity_scenarios(
                             core_scenarios.copy(), all_scenarios_odp.copy(),
                             reference_scenarios.copy(), df_sum,
                             ylabel, title, ymax, pdf,
                         )
-
-                    if self.cb_allcdp_plot.isChecked():
-                        plot_all_cdps(
-                            all_scenarios_odp.copy(), all_scenarios.copy(),
-                            core_scenarios.copy(), odp.copy(),
-                            df_sum, ylabel, f"{title} - Coal", ymax,
-                        )
         else:
-            # Preview mode — core scenarios only (first metric)
-            if metrics:
+            if metrics and self.cb_core_plot.isChecked():
                 df_sum, ylabel, title, ymax = metrics[0]
-                fig = plot_core_scenarios(
-                    highlight_isp, highlight_core,
-                    core_scenarios.copy(), df_sum, ylabel, title, ymax,
-                )
-                figures.append(fig)
+                figures.append(_draw_core(df_sum, ylabel, title, ymax))
 
         return figures
+
 
     def _preview(self):
         self.status_label.setText("Generating preview…")
@@ -711,15 +1089,15 @@ class CoreSensitivityTab(QWidget):
             return
 
         tech       = self._get_tech_filter()
-        is_coal    = self.coal_rb.isChecked()
-        tech_label = "Coal" if is_coal else "Gas"
+        tech_label = self.tech_selector.get_group_label()
         tech_list  = repr(tech)
 
         hi_isp  = reference_scenarios.iloc[0]["ISP"]  if not reference_scenarios.empty else ""
         hi_core = reference_scenarios.iloc[0]["core"] if not reference_scenarios.empty else ""
 
         core_rows_code = "\n".join(
-            f'    {{"ISP": {row["ISP"]!r}, "core": {row["core"]!r}, "ODP": {row["ODP"]!r}}},'
+            f'    {{"ISP": {row["ISP"]!r}, "core": {row["core"]!r}, "ODP": {row["ODP"]!r}, '
+            f'"colour": {row["colour"]!r}, "linestyle": {row["linestyle"]!r}}},'
             for _, row in core_scenarios.iterrows()
         )
         odp_rows_code = "\n".join(
@@ -742,7 +1120,6 @@ class CoreSensitivityTab(QWidget):
 
         do_core   = self.cb_core_plot.isChecked()
         do_sens   = self.cb_sens_plot.isChecked()
-        do_allcdp = self.cb_allcdp_plot.isChecked()
 
         import datetime
         now    = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -759,7 +1136,7 @@ class CoreSensitivityTab(QWidget):
 {prefix}_isp_plots.py
 Generated by isp_plot_gui.py on {now}
 
-Reproduces Core / Sensitivity / All-CDP line plots for {tech_label}.
+Reproduces Core / Sensitivity line plots for {tech_label}.
 Run from the project root (where ISP.db lives):
     python GUI/{prefix}_isp_plots.py
 
@@ -824,7 +1201,6 @@ METRICS = [
 
 DO_CORE_PLOT   = {do_core}
 DO_SENS_PLOT   = {do_sens}
-DO_ALLCDP_PLOT = {do_allcdp}
 
 OUTPUT_PDF = {str(Path(self.filename_edit.text()))!r}
 
@@ -889,26 +1265,17 @@ print("Data loaded.")
 # PLOT FUNCTIONS
 # ============================================================================
 
-def _color(name):
-    m = {{"Step Change": "black", "Slow Change": "red", "Progressive Change": "blue",
-          "Hydrogen Superpower": "green", "Green Energy Exports": "green",
-          "Slower Growth": "purple", "Accelerated Transition": "teal"}}
-    return m.get(name.split(" -")[0], "gray")
-
-
 def plot_core(df, ylabel, title, ymax):
-    styles = ["--", "-", ":"]
-    isp_ls = {{isp: styles[i % len(styles)] for i, isp in enumerate(core_scenarios["ISP"].unique())}}
     fig, ax = plt.subplots(figsize=(12, 8))
     for _, row in core_scenarios.iterrows():
-        sub  = df[(df.Data_source==row["ISP"]) & (df.Scenario_1==row["core"]) & (df.Scenario_2==row["ODP"])]
-        ref  = (row["ISP"]==HIGHLIGHT_ISP and row["core"]==HIGHLIGHT_CORE)
+        sub    = df[(df.Data_source==row["ISP"]) & (df.Scenario_1==row["core"]) & (df.Scenario_2==row["ODP"])]
+        is_ref = (row["ISP"]==HIGHLIGHT_ISP and row["core"]==HIGHLIGHT_CORE)
         ax.plot(sub.Year, sub.Value,
-                color="black" if ref else _color(row["core"]),
-                linestyle="-" if ref else isp_ls[row["ISP"]],
-                linewidth=3.5 if ref else 1.5,
-                label=f"{{row[\'ISP\']}} – {{row[\'core\']}}" + (" (Reference)" if ref else ""))
-    ax.set_title(f"Core Scenarios ODP – {{title}}", fontweight="bold", fontsize=16)
+                color     = "black" if is_ref else row["colour"],
+                linestyle = "-" if is_ref else row["linestyle"],
+                linewidth = 3.5 if is_ref else 1.5,
+                label     = f"{{row[\'ISP\']}} – {{row[\'core\']}}" + (" \u2605" if is_ref else ""))
+    ax.set_title(f"Core Scenarios – {{title}}", fontweight="bold", fontsize=16)
     ax.set_ylabel(ylabel, fontweight="bold", fontsize=14)
     ax.set_ylim(0, ymax); ax.legend(loc="best", fontsize=11); ax.grid()
     plt.tight_layout()
@@ -1126,14 +1493,16 @@ class BandGroupWidget(QGroupBox):
             return
         cdps = query_all_cdps_for_release(release)
         self.cdp_combo.addItems(cdps)
-        # Prefer preset CDP, else auto-select ODP
+        # Apply preset CDP if provided and valid
         preset_cdp = self._preset.get("cdp")
         if preset_cdp and preset_cdp in cdps:
             self.cdp_combo.setCurrentText(preset_cdp)
         else:
+            # Only auto-select if explicitly labelled (ODP) in the DB — never guess
             odp = query_odp_for_release(release)
             if odp and odp in cdps:
                 self.cdp_combo.setCurrentText(odp)
+            # else: leave combo on whatever the DB returns first and let user choose
         self._refresh_scenarios(self.cdp_combo.currentText())
         self.cdp_combo.currentTextChanged.connect(self._refresh_scenarios)
 
@@ -1200,15 +1569,8 @@ class FilledBandTab(QWidget):
         main_split.addWidget(left_scroll)
 
         # Technology
-        tech_box = QGroupBox("Technology")
-        tech_layout = QVBoxLayout(tech_box)
-        self.coal_rb = QRadioButton("Coal (Black Coal + Brown Coal)")
-        self.gpg_rb  = QRadioButton("Gas (Mid-merit + Peaking + Flexible)")
-        self.coal_rb.setChecked(False)
-        self.gpg_rb.setChecked(True)
-        tech_layout.addWidget(self.coal_rb)
-        tech_layout.addWidget(self.gpg_rb)
-        self._left_layout.addWidget(tech_box)
+        self.tech_selector = TechnologySelector(default_group="Gas")
+        self._left_layout.addWidget(self.tech_selector)
 
         # Chart title
         title_row = QHBoxLayout()
@@ -1373,10 +1735,7 @@ class FilledBandTab(QWidget):
             self.dir_label.setText(d)
 
     def _get_tech_filter(self) -> list[str]:
-        if self.coal_rb.isChecked():
-            return ["Black Coal", "Brown Coal"]
-        return ["Mid-merit Gas", "Mid-merit Gas with CCS",
-                "Peaking Gas+Liquids", "Flexible Gas", "Flexible Gas with CCS"]
+        return self.tech_selector.get_tech_filter()
 
     def _prepare_data(self):
         if self._data_cache is None:
@@ -1455,9 +1814,9 @@ class FilledBandTab(QWidget):
             return
 
         tech       = self._get_tech_filter()
-        is_coal    = self.coal_rb.isChecked()
-        tech_label = "Coal" if is_coal else "Gas"
-        tech_var   = "coal" if is_coal else "gpg"
+        tech_label = self.tech_selector.get_group_label()
+        # Use a safe Python identifier for the variable name in the generated script
+        tech_var   = tech_label.lower().replace(" ", "_").replace("/", "_")
 
         import datetime
         now    = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1801,6 +2160,5 @@ def main():
     sys.exit(app.exec())
 
 
-if __name_
-_ == "__main__":
+if __name__ == "__main__":
     main()
