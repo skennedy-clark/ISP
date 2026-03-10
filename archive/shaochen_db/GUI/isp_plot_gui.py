@@ -2,7 +2,7 @@
 """
 isp_plot_gui.py
 ===============
-PySide6 GUI for generating ISP coal analysis plots.
+PySide6 GUI for generating ISP analysis plots.
 
 Sits in the GUI/ subdirectory. The database and plotting script live one
 level up:
@@ -13,7 +13,7 @@ Run from the GUI/ directory:
     python isp_plot_gui.py
 
 Dependencies:
-    pip install PySide6 matplotlib pandas
+    pip install PySide6 matplotlib pandas pyyaml
 """
 
 import sys
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 import matplotlib
-matplotlib.use("QtAgg")   # interactive Qt backend — must be set before pyplot import
+matplotlib.use("QtAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_pdf import PdfPages
@@ -39,12 +39,67 @@ from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont
 
 # ---------------------------------------------------------------------------
-# Paths — GUI/ is one level below the project root
+# Paths
 # ---------------------------------------------------------------------------
 GUI_DIR     = Path(__file__).parent.resolve()
 PROJECT_DIR = GUI_DIR.parent
-DB_PATH     = PROJECT_DIR / "ISP.db"
-OUTPUT_DIR  = GUI_DIR   # default PDF output location
+CONFIG_PATH = GUI_DIR / "config.yaml"
+OUTPUT_DIR  = GUI_DIR
+
+
+# ---------------------------------------------------------------------------
+# Config — read/write a simple YAML file
+# Uses PyYAML if available, otherwise a minimal hand-rolled parser sufficient
+# for the flat key: value structure this file will always have.
+# ---------------------------------------------------------------------------
+
+def _load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        import yaml
+        with CONFIG_PATH.open("r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except ImportError:
+        pass
+    # Minimal fallback parser: key: value, one per line, # comments stripped
+    cfg = {}
+    for line in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.split("#")[0].strip()
+        if ":" in line:
+            k, _, v = line.partition(":")
+            cfg[k.strip()] = v.strip().strip('"').strip("'")
+    return cfg
+
+
+def _save_config(cfg: dict):
+    try:
+        import yaml
+        with CONFIG_PATH.open("w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+        return
+    except ImportError:
+        pass
+    # Minimal fallback writer
+    lines = ["# isp_plot_gui configuration\n"]
+    for k, v in cfg.items():
+        lines.append(f'{k}: "{v}"\n')
+    CONFIG_PATH.write_text("".join(lines), encoding="utf-8")
+
+
+# Initialise DB_PATH from config, fall back to default ../ISP.db
+_cfg = _load_config()
+DB_PATH: Path = Path(_cfg["db_path"]) if "db_path" in _cfg else PROJECT_DIR / "ISP.db"
+
+
+def set_db_path(new_path: Path):
+    """Update the runtime DB path and persist to config.yaml."""
+    global DB_PATH
+    DB_PATH = new_path
+    cfg = _load_config()
+    cfg["db_path"] = str(new_path)
+    _save_config(cfg)
+
 
 # ---------------------------------------------------------------------------
 # Import plot functions from the parent script.
@@ -548,39 +603,88 @@ class ReleasePanel(QGroupBox):
 # Matplotlib canvas widget
 # ---------------------------------------------------------------------------
 
-class PlotCanvas(QWidget):
-    """Embeds a matplotlib figure with navigation toolbar."""
+class PagedPlotCanvas(QWidget):
+    """
+    Embeds a matplotlib figure with Prev / Next page navigation.
+    Call show_figures(list_of_figs) to load a set of figures.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._figures: list = []
+        self._index: int = 0
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
-        self._fig, self._ax = plt.subplots(figsize=(10, 6))
-        self._canvas = FigureCanvas(self._fig)
+        # Canvas
+        self._placeholder_fig, ax = plt.subplots(figsize=(10, 6))
+        ax.text(0.5, 0.5, "Configure selections and click Preview",
+                ha="center", va="center", fontsize=14, color="#888888",
+                transform=ax.transAxes)
+        ax.axis("off")
+        self._canvas = FigureCanvas(self._placeholder_fig)
         self._canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self._canvas)
 
-        self._placeholder()
+        # Navigation bar
+        nav = QHBoxLayout()
+        self._prev_btn  = QPushButton("◀  Prev")
+        self._next_btn  = QPushButton("Next  ▶")
+        self._page_label = QLabel("")
+        self._page_label.setAlignment(Qt.AlignCenter)
+        self._prev_btn.setFixedWidth(80)
+        self._next_btn.setFixedWidth(80)
+        self._prev_btn.clicked.connect(self._prev)
+        self._next_btn.clicked.connect(self._next)
+        nav.addWidget(self._prev_btn)
+        nav.addStretch()
+        nav.addWidget(self._page_label)
+        nav.addStretch()
+        nav.addWidget(self._next_btn)
+        layout.addLayout(nav)
 
-    def _placeholder(self):
-        self._ax.clear()
-        self._ax.text(
-            0.5, 0.5, "Configure selections and click Preview",
-            ha="center", va="center", fontsize=14, color="#888888",
-            transform=self._ax.transAxes,
-        )
-        self._ax.axis("off")
-        self._canvas.draw()
+        self._update_nav()
 
-    def show_figure(self, fig: plt.Figure):
-        """Replace current figure with a new one."""
+    def show_figures(self, figures: list):
+        """Load a list of matplotlib figures and show the first one."""
+        self._figures = figures
+        self._index   = 0
+        self._show_current()
+
+    def show_figure(self, fig):
+        """Convenience — show a single figure."""
+        self.show_figures([fig])
+
+    def _show_current(self):
+        if not self._figures:
+            return
+        fig = self._figures[self._index]
         self._canvas.figure = fig
         self._canvas.draw()
-        self._fig = fig
+        self._update_nav()
 
-    def get_figure(self) -> plt.Figure:
-        return self._fig
+    def _prev(self):
+        if self._index > 0:
+            self._index -= 1
+            self._show_current()
+
+    def _next(self):
+        if self._index < len(self._figures) - 1:
+            self._index += 1
+            self._show_current()
+
+    def _update_nav(self):
+        n = len(self._figures)
+        self._page_label.setText(f"{self._index + 1} / {n}" if n else "")
+        self._prev_btn.setEnabled(self._index > 0)
+        self._next_btn.setEnabled(self._index < n - 1)
+
+    def get_figure(self):
+        if self._figures:
+            return self._figures[self._index]
+        return self._placeholder_fig
 
 
 # Default colours cycled across scenario rows
@@ -888,7 +992,7 @@ class CoreSensitivityTab(QWidget):
         left_layout.addStretch()
 
         # ---- Right: preview ----
-        self.canvas = PlotCanvas()
+        self.canvas = PagedPlotCanvas()
         main_split.addWidget(self.canvas)
         main_split.setSizes([560, 540])
 
@@ -1056,9 +1160,10 @@ class CoreSensitivityTab(QWidget):
                             ylabel, title, ymax, pdf,
                         )
         else:
-            if metrics and self.cb_core_plot.isChecked():
-                df_sum, ylabel, title, ymax = metrics[0]
-                figures.append(_draw_core(df_sum, ylabel, title, ymax))
+            # Preview: core plot for all selected metrics
+            for df_sum, ylabel, title, ymax in metrics:
+                if self.cb_core_plot.isChecked():
+                    figures.append(_draw_core(df_sum, ylabel, title, ymax))
 
         return figures
 
@@ -1070,8 +1175,9 @@ class CoreSensitivityTab(QWidget):
         try:
             figs = self._build_figures(save_path=None)
             if figs:
-                self.canvas.show_figure(figs[0])
-                self.status_label.setText("Preview ready.")
+                self.canvas.show_figures(figs)
+                n = len(figs)
+                self.status_label.setText(f"Preview ready — {n} page{'s' if n > 1 else ''}. Use ◀ ▶ to page through.")
             else:
                 self.status_label.setText("No metrics selected.")
         except Exception as e:
@@ -1657,7 +1763,7 @@ class FilledBandTab(QWidget):
         self._left_layout.addStretch()
 
         # ---- Right: preview ----
-        self.canvas = PlotCanvas()
+        self.canvas = PagedPlotCanvas()
         main_split.addWidget(self.canvas)
         main_split.setSizes([400, 700])
 
@@ -2077,14 +2183,14 @@ print("Done.")
         try:
             figures = self._run(save=False)
             if figures:
-                # Show first metric in canvas
-                self.canvas.show_figure(figures[0][0])
-                shown = figures[0][1]
-                rest  = [f[1] for f in figures[1:]]
-                msg   = f"Previewing: {shown}."
-                if rest:
-                    msg += f"  ({', '.join(rest)} also generated — save to PDF to view all.)"
-                self.status_label.setText(msg)
+                figs  = [f[0] for f in figures]
+                names = [f[1] for f in figures]
+                self.canvas.show_figures(figs)
+                n = len(figs)
+                self.status_label.setText(
+                    f"Preview ready — {n} page{'s' if n > 1 else ''} "
+                    f"({', '.join(names)}). Use ◀ ▶ to page through."
+                )
         except Exception as e:
             self.status_label.setText(f"Error: {e}")
             QMessageBox.critical(self, "Preview error", str(e))
@@ -2112,20 +2218,63 @@ print("Done.")
 # Main window
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
+
 class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ISP Coal Plot Generator")
-        self.resize(1100, 750)
+        self.setWindowTitle("ISP Plot Generator")
+        self.resize(1100, 780)
 
-        # Status bar shows DB path
-        self.statusBar().showMessage(f"Database: {DB_PATH}")
+        # Central widget wraps the DB bar + tabs
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(6, 6, 6, 4)
+        central_layout.setSpacing(4)
+        self.setCentralWidget(central)
 
-        tabs = QTabWidget()
-        tabs.addTab(CoreSensitivityTab(), "Core / Sensitivity / All-CDP")
-        tabs.addTab(FilledBandTab(),      "Filled Band Comparison")
-        self.setCentralWidget(tabs)
+        # ---- DB settings bar ----
+        db_box = QGroupBox("Database")
+        db_box.setMaximumHeight(64)
+        db_layout = QHBoxLayout(db_box)
+        db_layout.setContentsMargins(6, 4, 6, 4)
+
+        db_layout.addWidget(QLabel("ISP.db path:"))
+        self.db_path_edit = QLineEdit(str(DB_PATH))
+        self.db_path_edit.setReadOnly(True)
+        self.db_path_edit.setStyleSheet(
+            "background: #f5f5f5;" if DB_PATH.exists()
+            else "background: #fdecea; color: #c0392b;"
+        )
+        db_layout.addWidget(self.db_path_edit, 1)
+
+        browse_btn = QPushButton("Browse…")
+        browse_btn.setFixedWidth(75)
+        browse_btn.clicked.connect(self._browse_db)
+        db_layout.addWidget(browse_btn)
+
+        self.db_status_label = QLabel(
+            "✔  Found" if DB_PATH.exists() else "✘  Not found"
+        )
+        self.db_status_label.setStyleSheet(
+            "color: #27ae60;" if DB_PATH.exists() else "color: #c0392b;"
+        )
+        self.db_status_label.setFixedWidth(90)
+        db_layout.addWidget(self.db_status_label)
+
+        central_layout.addWidget(db_box)
+
+        # ---- Tabs ----
+        self.tabs = QTabWidget()
+        self.tabs.addTab(CoreSensitivityTab(), "Line Plots")
+        self.tabs.addTab(FilledBandTab(),      "Filled Band Comparison")
+        central_layout.addWidget(self.tabs)
+
+        # Status bar
+        self.statusBar().showMessage(f"Config: {CONFIG_PATH}")
 
         if not _PLOTS_LOADED:
             QMessageBox.warning(
@@ -2140,8 +2289,31 @@ class MainWindow(QMainWindow):
                 self,
                 "Database not found",
                 f"ISP.db not found at:\n{DB_PATH}\n\n"
-                "Check that the GUI/ folder is inside the project directory.",
+                "Use the Browse button to locate it. "
+                "The path will be saved to config.yaml for future sessions.",
             )
+
+    def _browse_db(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Locate ISP.db", str(DB_PATH.parent),
+            "SQLite databases (*.db *.sqlite *.sqlite3);;All files (*)"
+        )
+        if not path:
+            return
+        new_path = Path(path)
+        set_db_path(new_path)
+        self.db_path_edit.setText(str(new_path))
+        exists = new_path.exists()
+        self.db_path_edit.setStyleSheet(
+            "background: #f5f5f5;" if exists else "background: #fdecea; color: #c0392b;"
+        )
+        self.db_status_label.setText("✔  Found" if exists else "✘  Not found")
+        self.db_status_label.setStyleSheet(
+            "color: #27ae60;" if exists else "color: #c0392b;"
+        )
+        self.statusBar().showMessage(
+            f"DB path updated and saved to {CONFIG_PATH}"
+        )
 
 
 # ---------------------------------------------------------------------------
